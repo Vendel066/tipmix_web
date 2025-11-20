@@ -42,9 +42,6 @@ export default function ProfileMenu({ user, onLogout, onNavigate }) {
       </button>
       {open && (
         <div className="profile-dropdown" role="menu">
-          <button type="button" onClick={() => handleNavigate('home')}>
-            Kezdőlap
-          </button>
           <button type="button" onClick={() => handleNavigate('active')}>
             Aktív fogadások
           </button>

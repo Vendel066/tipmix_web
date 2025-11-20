@@ -3,8 +3,6 @@ import ProfileMenu from './ProfileMenu';
 const baseNavItems = [
   { key: 'home', label: 'Home' },
   { key: 'bets', label: 'Fogadások' },
-  { key: 'active', label: 'Aktív fogadások' },
-  { key: 'history', label: 'Napló' },
 ];
 
 export default function Navbar({ active, onChange, user, onLogout }) {

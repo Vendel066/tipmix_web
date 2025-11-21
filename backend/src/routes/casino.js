@@ -36,12 +36,19 @@ router.post('/gem/start', auth(), async (req, res) => {
       req.user.id,
     ]);
 
+    // Frissített egyenleg lekérése
+    const [updatedUserRows] = await connection.execute(
+      'SELECT balance FROM users WHERE id = ?',
+      [req.user.id],
+    );
+    const newBalance = Number(updatedUserRows[0].balance);
+
     await connection.commit();
     connection.release();
 
     return res.json({
       success: true,
-      newBalance: Number(user.balance) - numericBet,
+      newBalance,
     });
   } catch (err) {
     if (connection) {
@@ -131,6 +138,13 @@ router.post('/gem/cashout', auth(), async (req, res) => {
       req.user.id,
     ]);
 
+    // Frissített egyenleg lekérése
+    const [updatedUserRows] = await connection.execute(
+      'SELECT balance FROM users WHERE id = ?',
+      [req.user.id],
+    );
+    const newBalance = Number(updatedUserRows[0].balance);
+
     const [result] = await connection.execute(
       `INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, game_data, status)
        VALUES (?, 'MINESWEEPER', ?, ?, ?, 'WON')`,
@@ -148,7 +162,7 @@ router.post('/gem/cashout', auth(), async (req, res) => {
     return res.json({
       success: true,
       winAmount,
-      newBalance: Number(user.balance) + winAmount,
+      newBalance,
       gameId: result.insertId,
     });
   } catch (err) {
@@ -157,6 +171,244 @@ router.post('/gem/cashout', auth(), async (req, res) => {
       connection.release();
     }
     return res.status(500).json({ message: 'Hiba a kifizetés során' });
+  }
+});
+
+// Rulett játék - fogadás és forgatás
+router.post('/roulette/spin', auth(), async (req, res) => {
+  const { bets } = req.body;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [userRows] = await connection.execute(
+      'SELECT id, balance FROM users WHERE id = ? FOR UPDATE',
+      [req.user.id],
+    );
+    const user = userRows[0];
+    if (!user) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Felhasználó nem található' });
+    }
+
+    // Összes tét számítása
+    const totalBet = bets.reduce((sum, bet) => sum + Number(bet.amount), 0);
+    
+    if (Number(user.balance) < totalBet) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Nincs elegendő egyenleg' });
+    }
+
+    // Tét levonása
+    await connection.execute('UPDATE users SET balance = balance - ? WHERE id = ?', [
+      totalBet,
+      req.user.id,
+    ]);
+    
+    // Egyenleg tét levonása után (még nincs hozzáadva a nyeremény)
+    const balanceAfterBet = Number(user.balance) - totalBet;
+
+    // Véletlenszerű szám generálása (0-36) - crypto-secure random
+    // Math.random() helyett jobb random generátor használata
+    const crypto = require('crypto');
+    const randomBytes = crypto.randomBytes(4);
+    const randomValue = randomBytes.readUInt32BE(0) / 0xFFFFFFFF;
+    const winningNumber = Math.floor(randomValue * 37);
+    
+    console.log(`🎰 Rulett nyerő szám generálva: ${winningNumber}`);
+
+    // Nyeremény számítása
+    let totalWin = 0;
+    const winDetails = [];
+
+    console.log(`🎰 Feldolgozás: ${bets.length} tét, nyerő szám: ${winningNumber}`);
+    
+    bets.forEach((bet) => {
+      const amount = Number(bet.amount);
+      let won = false;
+      let winAmount = 0;
+
+      console.log(`🎰 Tét feldolgozása: type=${bet.type}, value=${bet.value}, amount=${amount}`);
+
+      switch (bet.type) {
+        case 'number':
+          if (winningNumber === Number(bet.value)) {
+            won = true;
+            winAmount = amount * 36; // 35:1 odds + eredeti tét = 36x összesen
+          }
+          break;
+        case 'color':
+          const isRed = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36].includes(winningNumber);
+          const isBlack = [2, 4, 6, 8, 10, 11, 13, 15, 17, 20, 22, 24, 26, 28, 29, 31, 33, 35].includes(winningNumber);
+          if ((bet.value === 'red' && isRed) || (bet.value === 'black' && isBlack)) {
+            won = true;
+            winAmount = amount * 2; // 1:1
+          }
+          break;
+        case 'even':
+          if (winningNumber !== 0 && winningNumber % 2 === 0) {
+            won = true;
+            winAmount = amount * 2; // 1:1
+          }
+          break;
+        case 'odd':
+          if (winningNumber !== 0 && winningNumber % 2 === 1) {
+            won = true;
+            winAmount = amount * 2; // 1:1
+          }
+          break;
+        case 'range':
+          if (bet.value === '1-18' && winningNumber >= 1 && winningNumber <= 18) {
+            won = true;
+            winAmount = amount * 2; // 1:1
+          } else if (bet.value === '19-36' && winningNumber >= 19 && winningNumber <= 36) {
+            won = true;
+            winAmount = amount * 2; // 1:1
+          }
+          break;
+        case 'dozen':
+          if (bet.value === 1 && winningNumber >= 1 && winningNumber <= 12) {
+            won = true;
+            winAmount = amount * 3; // 2:1
+          } else if (bet.value === 2 && winningNumber >= 13 && winningNumber <= 24) {
+            won = true;
+            winAmount = amount * 3; // 2:1
+          } else if (bet.value === 3 && winningNumber >= 25 && winningNumber <= 36) {
+            won = true;
+            winAmount = amount * 3; // 2:1
+          }
+          break;
+        case 'column':
+          // Oszlop 1: 1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34
+          // Oszlop 2: 2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35
+          // Oszlop 3: 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36
+          const column1 = [1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34];
+          const column2 = [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35];
+          const column3 = [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36];
+          
+          if (bet.value === 1 && column1.includes(winningNumber)) {
+            won = true;
+            winAmount = amount * 3; // 2:1
+          } else if (bet.value === 2 && column2.includes(winningNumber)) {
+            won = true;
+            winAmount = amount * 3; // 2:1
+          } else if (bet.value === 3 && column3.includes(winningNumber)) {
+            won = true;
+            winAmount = amount * 3; // 2:1
+          }
+          break;
+      }
+
+      if (won) {
+        totalWin += winAmount;
+        winDetails.push({ bet, winAmount });
+        console.log(`🎰 ✅ Nyert tét: type=${bet.type}, value=${bet.value}, nyeremény=${winAmount}`);
+      } else {
+        console.log(`🎰 ❌ Vesztett tét: type=${bet.type}, value=${bet.value}`);
+      }
+    });
+    
+    console.log(`🎰 Összes nyeremény: ${totalWin} HUF`);
+
+    // NE adjuk hozzá a nyereményt azonnal az adatbázishoz!
+    // A frontend-ben az animáció végén hívunk egy külön API-t, ami hozzáadja a nyereményt.
+    // Itt csak számoljuk ki a végső egyenleget.
+    const newBalance = balanceAfterBet + totalWin;
+    
+    // Az adatbázisban csak a tét van levonva, a nyeremény még nincs hozzáadva
+
+    // Játék mentése az adatbázisba
+    const status = totalWin > 0 ? 'WON' : 'LOST';
+    const gameData = JSON.stringify({ winningNumber, bets, winDetails });
+    
+    console.log(`🎰 Adatbázis mentés: user_id=${req.user.id}, bet_amount=${totalBet}, win_amount=${totalWin}, status=${status}`);
+    
+    await connection.execute(
+      `INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, game_data, status)
+       VALUES (?, 'ROULETTE', ?, ?, ?, ?)`,
+      [
+        req.user.id,
+        totalBet,
+        totalWin,
+        gameData,
+        status,
+      ],
+    );
+
+    await connection.commit();
+    connection.release();
+    
+    console.log(`🎰 Adatbázis mentés sikeres!`);
+    
+    return res.json({
+      success: true,
+      winningNumber,
+      totalBet,
+      winAmount: totalWin,
+      newBalance: newBalance, // Tét levonva + nyeremény hozzáadva (számított érték)
+      balanceAfterBet: balanceAfterBet, // Egyenleg tét levonása után (adatbázisban lévő érték)
+    });
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('Roulette spin error:', err);
+    return res.status(500).json({ message: 'Hiba a játék során' });
+  }
+});
+
+// Nyeremény hozzáadása az animáció végén
+router.post('/roulette/add-win', auth(), async (req, res) => {
+  const { winAmount } = req.body;
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [userRows] = await connection.execute(
+      'SELECT id, balance FROM users WHERE id = ? FOR UPDATE',
+      [req.user.id],
+    );
+    const user = userRows[0];
+    if (!user) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Felhasználó nem található' });
+    }
+
+    // Nyeremény hozzáadása
+    if (winAmount > 0) {
+      await connection.execute('UPDATE users SET balance = balance + ? WHERE id = ?', [
+        winAmount,
+        req.user.id,
+      ]);
+    }
+
+    // Frissített egyenleg lekérése
+    const [updatedUserRows] = await connection.execute(
+      'SELECT balance FROM users WHERE id = ?',
+      [req.user.id],
+    );
+    const newBalance = Number(updatedUserRows[0].balance);
+
+    await connection.commit();
+    connection.release();
+
+    return res.json({
+      success: true,
+      newBalance,
+    });
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('Add win error:', err);
+    return res.status(500).json({ message: 'Hiba a nyeremény hozzáadása során' });
   }
 });
 

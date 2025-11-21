@@ -143,7 +143,7 @@ CREATE TABLE `combo_selections` (
 CREATE TABLE `casino_games` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `user_id` INT NOT NULL,
-  `game_type` ENUM('MINESWEEPER','SLOT','BLACKJACK') NOT NULL,
+  `game_type` ENUM('MINESWEEPER','SLOT','BLACKJACK','ROULETTE') NOT NULL,
   `bet_amount` DECIMAL(10,2) NOT NULL,
   `win_amount` DECIMAL(12,2) DEFAULT 0,
   `game_data` JSON,

@@ -1,27 +1,27 @@
-import { useCallback } from 'react';
-import GemGame from './casino/GemGame';
+import { useState, useEffect } from 'react';
+import RouletteGame from './casino/RouletteGame';
 
-export default function Casino({ user, onBalanceUpdate, selectedGame, onSelectGame }) {
-  // Stabil callback, hogy ne veszítse el a state-et amikor újrarenderelődik
-  const handleBalanceUpdate = useCallback(async (newBalance) => {
-    if (onBalanceUpdate) {
-      await onBalanceUpdate(newBalance);
+export default function Casino({ user, onBalanceUpdate }) {
+  // localStorage-ból olvassuk be, hogy ne vesszen el újrarendereléskor
+  const [selectedGame, setSelectedGame] = useState(() => {
+    return localStorage.getItem('casino_selected_game') || null;
+  });
+  
+  // Mentjük localStorage-ba amikor változik
+  useEffect(() => {
+    if (selectedGame) {
+      localStorage.setItem('casino_selected_game', selectedGame);
+    } else {
+      localStorage.removeItem('casino_selected_game');
     }
-  }, [onBalanceUpdate]);
-
-  // Biztosítjuk, hogy az onSelectGame mindig létezik
-  const handleSelectGame = (gameId) => {
-    if (onSelectGame) {
-      onSelectGame(gameId);
-    }
-  };
+  }, [selectedGame]);
 
   const games = [
     {
-      id: 'gem',
-      name: 'Gem Kereső',
-      icon: '💎',
-      description: 'Válassz mezőket és kerüld el a bombákat! Minden gem növeli a szorzót. Cashout bármikor!',
+      id: 'roulette',
+      name: 'Európai Rulett',
+      icon: '🎰',
+      description: 'Klasszikus rulett játék! Válassz számokat, színeket vagy egyéb kombinációkat és próbáld meg eltalálni a nyerő számot!',
       minBet: 500,
     },
   ];
@@ -33,12 +33,12 @@ export default function Casino({ user, onBalanceUpdate, selectedGame, onSelectGa
         <button
           type="button"
           className="casino-back-btn"
-          onClick={() => handleSelectGame(null)}
+          onClick={() => setSelectedGame(null)}
         >
           ← Vissza a játékokhoz
         </button>
-        {selectedGame === 'gem' && (
-          <GemGame user={user} onBalanceUpdate={handleBalanceUpdate} />
+        {selectedGame === 'roulette' && (
+          <RouletteGame user={user} onBalanceUpdate={onBalanceUpdate} />
         )}
       </div>
     );
@@ -55,7 +55,7 @@ export default function Casino({ user, onBalanceUpdate, selectedGame, onSelectGa
           <div
             key={game.id}
             className="casino-game-card"
-            onClick={() => handleSelectGame(game.id)}
+            onClick={() => setSelectedGame(game.id)}
           >
             <div className="casino-game-icon">{game.icon}</div>
             <h3>{game.name}</h3>

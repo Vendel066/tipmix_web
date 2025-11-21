@@ -5,6 +5,7 @@ const baseNavItems = [
   { key: 'home', label: 'Home' },
   { key: 'bets', label: 'Fogadások' },
   { key: 'combo', label: 'Kötés' },
+  { key: 'casino', label: 'Kaszinó' },
 ];
 
 export default function Navbar({ active, onChange, user, onLogout, onPaymentRequest }) {
@@ -19,7 +20,7 @@ export default function Navbar({ active, onChange, user, onLogout, onPaymentRequ
   return (
     <nav className="app-navbar">
       <div className="logo-mark">
-        <span>Tipmix Pro</span>
+        <span>MixMix Pro</span>
       </div>
       <div className="nav-links">
         {items.map((item) => (

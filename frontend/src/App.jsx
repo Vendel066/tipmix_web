@@ -7,6 +7,7 @@ import AdminPanel from './components/AdminPanel';
 import HistoryTable from './components/HistoryTable';
 import Navbar from './components/Navbar';
 import PaymentModal from './components/PaymentModal';
+import Casino from './components/Casino';
 import { api } from './services/api';
 import { useAuth } from './hooks/useAuth';
 
@@ -176,6 +177,18 @@ function App() {
   const renderAdmin = () =>
     isAdmin ? <AdminPanel bets={adminBets} onCreate={handleCreateBet} onClose={handleCloseBet} /> : null;
 
+  const renderCasino = () => (
+    <Casino
+      user={user}
+      onBalanceUpdate={async (newBalance) => {
+        // Közvetlenül frissítjük az egyenleget, ne hívjuk meg a refreshProfile()-t,
+        // mert az újra lekéri az adatbázisból az egyenleget, ami már tartalmazza a nyereményt is
+        // Csak az animáció végén hívjuk meg, amikor a nyereményt is hozzáadjuk
+        await refreshProfile();
+      }}
+    />
+  );
+
   const renderContent = () => {
     switch (activeTab) {
       case 'home':
@@ -190,6 +203,8 @@ function App() {
         return renderHistory();
       case 'admin':
         return renderAdmin();
+      case 'casino':
+        return renderCasino();
       default:
         return renderHome();
     }

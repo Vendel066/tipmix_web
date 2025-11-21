@@ -1,13 +1,20 @@
+import { useMemo } from 'react';
 import ProfileMenu from './ProfileMenu';
 
 const baseNavItems = [
   { key: 'home', label: 'Home' },
   { key: 'bets', label: 'Fogadások' },
+  { key: 'combo', label: 'Kötés' },
 ];
 
-export default function Navbar({ active, onChange, user, onLogout }) {
+export default function Navbar({ active, onChange, user, onLogout, onPaymentRequest }) {
   const items = baseNavItems;
   const isAdmin = Boolean(user?.is_admin);
+
+  const balance = useMemo(
+    () => new Intl.NumberFormat('hu-HU', { style: 'currency', currency: 'HUF', maximumFractionDigits: 0 }).format(user?.balance ?? 0),
+    [user?.balance],
+  );
 
   return (
     <nav className="app-navbar">
@@ -25,17 +32,20 @@ export default function Navbar({ active, onChange, user, onLogout }) {
             {item.label}
           </button>
         ))}
-        {isAdmin && (
-          <button
-            type="button"
-            className={active === 'admin' ? 'active' : ''}
-            onClick={() => onChange('admin')}
-          >
-            Admin
-          </button>
-        )}
       </div>
-      <ProfileMenu user={user} onLogout={onLogout} onNavigate={onChange} />
+      <div className="navbar-right">
+        <div className="balance-display">
+          <span className="balance-label">Egyenleg</span>
+          <strong className="balance-amount">{balance}</strong>
+        </div>
+        <ProfileMenu
+        user={user}
+        onLogout={onLogout}
+        onNavigate={onChange}
+        onPaymentRequest={() => onPaymentRequest?.('withdraw')}
+        onDepositRequest={() => onPaymentRequest?.('deposit')}
+      />
+      </div>
     </nav>
   );
 }

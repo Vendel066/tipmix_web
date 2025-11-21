@@ -36,7 +36,8 @@ export default function AuthPanel() {
         await register(form);
       }
     } catch (err) {
-      const message = err?.response?.data?.message || 'Hiba történt, próbáld újra.';
+      console.error('Auth error:', err);
+      const message = err?.response?.data?.message || err?.message || 'Hiba történt, próbáld újra.';
       setError(message);
     } finally {
       setSubmitting(false);

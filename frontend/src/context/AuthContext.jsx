@@ -31,12 +31,17 @@ export function AuthProvider({ children }) {
   }, [token, loadProfile]);
 
   const handleAuth = useCallback(async (endpoint, payload) => {
-    const { data } = await api.post(`/auth/${endpoint}`, payload);
-    setToken(data.token);
-    setUser(data.user);
-    localStorage.setItem('tipmix_token', data.token);
-    setAuthToken(data.token);
-    return data.user;
+    try {
+      const { data } = await api.post(`/auth/${endpoint}`, payload);
+      setToken(data.token);
+      setUser(data.user);
+      localStorage.setItem('tipmix_token', data.token);
+      setAuthToken(data.token);
+      return data.user;
+    } catch (err) {
+      console.error(`Auth ${endpoint} error:`, err);
+      throw err;
+    }
   }, []);
 
   const login = useCallback((payload) => handleAuth('login', payload), [handleAuth]);

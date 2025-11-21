@@ -2,9 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import './App.css';
 import AuthPanel from './components/AuthPanel';
 import BetCard from './components/BetCard';
+import ComboBetCard from './components/ComboBetCard';
 import AdminPanel from './components/AdminPanel';
 import HistoryTable from './components/HistoryTable';
 import Navbar from './components/Navbar';
+import PaymentModal from './components/PaymentModal';
 import { api } from './services/api';
 import { useAuth } from './hooks/useAuth';
 
@@ -17,6 +19,7 @@ function App() {
   const [adminBets, setAdminBets] = useState([]);
   const [globalLoading, setGlobalLoading] = useState(false);
   const [toast, setToast] = useState(null);
+  const [paymentModal, setPaymentModal] = useState(null);
 
   const isAdmin = Boolean(user?.is_admin);
 
@@ -83,6 +86,15 @@ function App() {
     await loadData();
   };
 
+  const handlePaymentRequest = (type) => {
+    setPaymentModal(type);
+  };
+
+  const handlePaymentSuccess = (message) => {
+    showToast(message);
+    refreshProfile();
+  };
+
   if (authLoading) {
     return (
       <div className="page centered">
@@ -128,13 +140,32 @@ function App() {
   );
 
   const renderBetGrid = () => (
-    <section className="bet-grid">
-      {openBets.length ? (
-        openBets.map((bet) => (
-          <BetCard key={bet.id} bet={bet} onPlaceBet={handlePlaceBet} disabled={globalLoading} />
-        ))
+    <section>
+      <div className="bet-grid">
+        {openBets.length ? (
+          openBets.map((bet) => (
+            <BetCard key={bet.id} bet={bet} onPlaceBet={handlePlaceBet} disabled={globalLoading} />
+          ))
+        ) : (
+          <div className="empty-state">Nincsenek nyitott fogadások. Nézz vissza később vagy hozz létre egyet!</div>
+        )}
+      </div>
+    </section>
+  );
+
+  const renderCombo = () => (
+    <section>
+      {openBets.length >= 2 ? (
+        <ComboBetCard
+          bets={openBets}
+          onSuccess={(msg) => {
+            showToast(msg);
+            refreshProfile();
+            loadData();
+          }}
+        />
       ) : (
-        <div className="empty-state">Nincsenek nyitott fogadások. Nézz vissza később vagy hozz létre egyet!</div>
+        <div className="empty-state">Legalább 2 nyitott fogadás szükséges a kötéses fogadáshoz.</div>
       )}
     </section>
   );
@@ -151,6 +182,8 @@ function App() {
         return renderHome();
       case 'bets':
         return renderBetGrid();
+      case 'combo':
+        return renderCombo();
       case 'active':
         return renderActive();
       case 'history':
@@ -164,7 +197,13 @@ function App() {
 
   return (
     <div className="page dashboard">
-      <Navbar active={activeTab} onChange={setActiveTab} user={user} onLogout={logout} />
+      <Navbar
+        active={activeTab}
+        onChange={setActiveTab}
+        user={user}
+        onLogout={logout}
+        onPaymentRequest={handlePaymentRequest}
+      />
       {globalLoading && (
         <div className="inline-loader">
           <div className="loader tiny" />
@@ -176,6 +215,13 @@ function App() {
         <div className={`toast ${toast.variant}`}>
           <p>{toast.message}</p>
         </div>
+      )}
+      {paymentModal && (
+        <PaymentModal
+          type={paymentModal}
+          onClose={() => setPaymentModal(null)}
+          onSuccess={handlePaymentSuccess}
+        />
       )}
     </div>
   );

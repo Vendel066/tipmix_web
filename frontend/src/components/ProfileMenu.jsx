@@ -1,7 +1,8 @@
 import { useState } from 'react';
 
-export default function ProfileMenu({ user, onLogout, onNavigate }) {
+export default function ProfileMenu({ user, onLogout, onNavigate, onPaymentRequest, onDepositRequest }) {
   const [open, setOpen] = useState(false);
+  const isAdmin = Boolean(user?.is_admin);
 
   const initials = user?.username?.slice(0, 2)?.toUpperCase() || 'US';
 
@@ -13,6 +14,16 @@ export default function ProfileMenu({ user, onLogout, onNavigate }) {
   const handleLogout = () => {
     setOpen(false);
     onLogout?.();
+  };
+
+  const handlePaymentClick = () => {
+    setOpen(false);
+    onPaymentRequest?.();
+  };
+
+  const handleDepositClick = () => {
+    setOpen(false);
+    onDepositRequest?.();
   };
 
   return (
@@ -48,6 +59,25 @@ export default function ProfileMenu({ user, onLogout, onNavigate }) {
           <button type="button" onClick={() => handleNavigate('history')}>
             Napló
           </button>
+          {isAdmin && (
+            <>
+              <hr />
+              <button type="button" onClick={() => handleNavigate('admin')}>
+                Admin
+              </button>
+            </>
+          )}
+          {!isAdmin && (
+            <>
+              <hr />
+              <button type="button" onClick={handleDepositClick}>
+                Befizetés
+              </button>
+              <button type="button" onClick={handlePaymentClick}>
+                Kifizetés
+              </button>
+            </>
+          )}
           <hr />
           <button type="button" className="danger" onClick={handleLogout}>
             Kijelentkezés

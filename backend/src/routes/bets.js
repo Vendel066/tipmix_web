@@ -74,7 +74,8 @@ router.get('/me/history', auth(), async (req, res) => {
             ub.odds_snapshot,
             b.title,
             b.result_outcome_id,
-            win.label AS result_label
+            win.label AS result_label,
+            'single' AS bet_type
        FROM user_bets ub
        JOIN bets b ON b.id = ub.bet_id
   LEFT JOIN bet_outcomes win ON win.id = b.result_outcome_id
@@ -82,7 +83,31 @@ router.get('/me/history', auth(), async (req, res) => {
       ORDER BY ub.created_at DESC`,
     [req.user.id],
   );
-  return res.json({ bets: rows });
+
+  // Hozzáadni a lezárt combo fogadásokat is
+  const comboRows = await query(
+    `SELECT bc.id,
+            CONCAT('Kötés (', COUNT(cs.id), ' fogadás)') AS selection,
+            bc.total_stake AS stake,
+            bc.potential_win,
+            bc.status,
+            bc.created_at,
+            bc.total_odds AS odds_snapshot,
+            'Kötéses fogadás' AS title,
+            NULL AS result_outcome_id,
+            NULL AS result_label,
+            'combo' AS bet_type
+       FROM bet_combos bc
+       JOIN combo_selections cs ON cs.combo_id = bc.id
+      WHERE bc.user_id = ?
+        AND bc.status IN ('WON', 'LOST')
+      GROUP BY bc.id
+      ORDER BY bc.created_at DESC`,
+    [req.user.id],
+  );
+
+  const allBets = [...rows, ...comboRows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return res.json({ bets: allBets });
 });
 
 router.get('/me/active', auth(), async (req, res) => {
@@ -94,7 +119,8 @@ router.get('/me/active', auth(), async (req, res) => {
             ub.status,
             ub.created_at,
             ub.odds_snapshot,
-            b.title
+            b.title,
+            'single' AS bet_type
        FROM user_bets ub
        JOIN bets b ON b.id = ub.bet_id
       WHERE ub.user_id = ?
@@ -102,7 +128,29 @@ router.get('/me/active', auth(), async (req, res) => {
       ORDER BY ub.created_at DESC`,
     [req.user.id],
   );
-  return res.json({ bets: rows });
+
+  // Hozzáadni a combo fogadásokat is
+  const comboRows = await query(
+    `SELECT bc.id,
+            CONCAT('Kötés (', COUNT(cs.id), ' fogadás)') AS selection,
+            bc.total_stake AS stake,
+            bc.potential_win,
+            bc.status,
+            bc.created_at,
+            bc.total_odds AS odds_snapshot,
+            'Kötéses fogadás' AS title,
+            'combo' AS bet_type
+       FROM bet_combos bc
+       JOIN combo_selections cs ON cs.combo_id = bc.id
+      WHERE bc.user_id = ?
+        AND bc.status = 'PENDING'
+      GROUP BY bc.id
+      ORDER BY bc.created_at DESC`,
+    [req.user.id],
+  );
+
+  const allBets = [...rows, ...comboRows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  return res.json({ bets: allBets });
 });
 
 router.get('/admin', auth(), requireAdmin, async (_req, res) => {
@@ -332,6 +380,12 @@ router.post('/:id/close', auth(), requireAdmin, async (req, res) => {
           AND outcome_id <> ?`,
       [betId, outcomeId],
     );
+
+    // Automatikusan ellenőrizni a combo fogadásokat
+    const { checkCombos } = require('./combos');
+    if (checkCombos) {
+      await checkCombos(connection);
+    }
 
     await connection.commit();
     return res.json({ message: 'Fogadás lezárva' });

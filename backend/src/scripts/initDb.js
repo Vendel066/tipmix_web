@@ -5,6 +5,10 @@ const config = require('../config');
 
 async function resetSchema() {
   await query('SET FOREIGN_KEY_CHECKS = 0;');
+  await query('DROP TABLE IF EXISTS casino_games;');
+  await query('DROP TABLE IF EXISTS bet_combos;');
+  await query('DROP TABLE IF EXISTS combo_selections;');
+  await query('DROP TABLE IF EXISTS transactions;');
   await query('DROP TABLE IF EXISTS user_bets;');
   await query('DROP TABLE IF EXISTS bet_outcomes;');
   await query('DROP TABLE IF EXISTS bets;');
@@ -76,6 +80,62 @@ async function createTables() {
     FOREIGN KEY (result_outcome_id) REFERENCES bet_outcomes(id)
     ON DELETE SET NULL;
   `).catch(() => {});
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS transactions (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      type ENUM('WITHDRAWAL','DEPOSIT') NOT NULL,
+      amount DECIMAL(12,2) NOT NULL,
+      status ENUM('PENDING','APPROVED','REJECTED','COMPLETED') DEFAULT 'PENDING',
+      processed_by INT NULL,
+      processed_at DATETIME NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      FOREIGN KEY (processed_by) REFERENCES users(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS bet_combos (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      total_stake DECIMAL(10,2) NOT NULL,
+      total_odds DECIMAL(8,2) NOT NULL,
+      potential_win DECIMAL(12,2) NOT NULL,
+      status ENUM('PENDING','WON','LOST') DEFAULT 'PENDING',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS combo_selections (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      combo_id INT NOT NULL,
+      bet_id INT NOT NULL,
+      outcome_id INT NOT NULL,
+      selection VARCHAR(120) NOT NULL,
+      odds_snapshot DECIMAL(6,2) NOT NULL,
+      FOREIGN KEY (combo_id) REFERENCES bet_combos(id) ON DELETE CASCADE,
+      FOREIGN KEY (bet_id) REFERENCES bets(id) ON DELETE CASCADE,
+      FOREIGN KEY (outcome_id) REFERENCES bet_outcomes(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS casino_games (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      game_type ENUM('MINESWEEPER','SLOT','BLACKJACK') NOT NULL,
+      bet_amount DECIMAL(10,2) NOT NULL,
+      win_amount DECIMAL(12,2) DEFAULT 0,
+      game_data JSON,
+      status ENUM('PENDING','WON','LOST') DEFAULT 'PENDING',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
 }
 
 async function ensureAdminUser() {

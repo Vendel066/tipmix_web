@@ -4,8 +4,8 @@ import ProfileMenu from './ProfileMenu';
 const baseNavItems = [
   { key: 'home', label: 'Home' },
   { key: 'bets', label: 'Fogadások' },
-  { key: 'combo', label: 'Kötés' },
   { key: 'casino', label: 'Kaszinó' },
+  { key: 'investment', label: 'Befektetés' },
 ];
 
 export default function Navbar({ active, onChange, user, onLogout, onPaymentRequest }) {

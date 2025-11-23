@@ -6,6 +6,7 @@ const betRoutes = require('./routes/bets');
 const paymentRoutes = require('./routes/payments');
 const { router: comboRoutes } = require('./routes/combos');
 const casinoRoutes = require('./routes/casino');
+const investmentRoutes = require('./routes/investment');
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use('/api/bets', betRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/combos', comboRoutes);
 app.use('/api/casino', casinoRoutes);
+app.use('/api/investment', investmentRoutes);
 
 app.use((err, _req, res, _next) => {
   // eslint-disable-next-line no-console

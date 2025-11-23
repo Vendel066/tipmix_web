@@ -8,6 +8,8 @@ import HistoryTable from './components/HistoryTable';
 import Navbar from './components/Navbar';
 import PaymentModal from './components/PaymentModal';
 import Casino from './components/Casino';
+import Investment from './components/Investment';
+import Portfolio from './components/Portfolio';
 import Notification from './components/Notification';
 import { api } from './services/api';
 import { useAuth } from './hooks/useAuth';
@@ -24,6 +26,8 @@ function App() {
   const [paymentModal, setPaymentModal] = useState(null);
   const [notification, setNotification] = useState(null);
   const [notificationType, setNotificationType] = useState(null);
+  const [betsTab, setBetsTab] = useState('bets'); // Tab kezelés a fogadások oldalon
+  const [investmentTab, setInvestmentTab] = useState('investment'); // Tab kezelés a befektetés oldalon
 
   const isAdmin = Boolean(user?.is_admin);
 
@@ -145,15 +149,51 @@ function App() {
 
   const renderBetGrid = () => (
     <section>
-      <div className="bet-grid">
-        {openBets.length ? (
-          openBets.map((bet) => (
-            <BetCard key={bet.id} bet={bet} onPlaceBet={handlePlaceBet} disabled={globalLoading} />
-          ))
-        ) : (
-          <div className="empty-state">Nincsenek nyitott fogadások. Nézz vissza később vagy hozz létre egyet!</div>
-        )}
+      <div className="admin-tabs">
+        <button
+          type="button"
+          className={betsTab === 'bets' ? 'active' : ''}
+          onClick={() => setBetsTab('bets')}
+        >
+          Fogadások
+        </button>
+        <button
+          type="button"
+          className={betsTab === 'combo' ? 'active' : ''}
+          onClick={() => setBetsTab('combo')}
+        >
+          Kötés
+        </button>
       </div>
+
+      {betsTab === 'bets' && (
+        <div className="bet-grid">
+          {openBets.length ? (
+            openBets.map((bet) => (
+              <BetCard key={bet.id} bet={bet} onPlaceBet={handlePlaceBet} disabled={globalLoading} />
+            ))
+          ) : (
+            <div className="empty-state">Nincsenek nyitott fogadások. Nézz vissza később vagy hozz létre egyet!</div>
+          )}
+        </div>
+      )}
+
+      {betsTab === 'combo' && (
+        <div>
+          {openBets.length >= 2 ? (
+            <ComboBetCard
+              bets={openBets}
+              onSuccess={(msg) => {
+                showToast(msg);
+                refreshProfile();
+                loadData();
+              }}
+            />
+          ) : (
+            <div className="empty-state">Legalább 2 nyitott fogadás szükséges a kötéses fogadáshoz.</div>
+          )}
+        </div>
+      )}
     </section>
   );
 
@@ -203,8 +243,6 @@ function App() {
         return renderHome();
       case 'bets':
         return renderBetGrid();
-      case 'combo':
-        return renderCombo();
       case 'active':
         return renderActive();
       case 'history':
@@ -213,6 +251,49 @@ function App() {
         return renderAdmin();
       case 'casino':
         return renderCasino();
+      case 'investment':
+        return (
+          <section>
+            <div className="admin-tabs">
+              <button
+                type="button"
+                className={investmentTab === 'investment' ? 'active' : ''}
+                onClick={() => setInvestmentTab('investment')}
+              >
+                Befektetés
+              </button>
+              <button
+                type="button"
+                className={investmentTab === 'portfolio' ? 'active' : ''}
+                onClick={() => setInvestmentTab('portfolio')}
+              >
+                Portfolio
+              </button>
+            </div>
+
+            {investmentTab === 'investment' && (
+              <Investment
+                user={user}
+                onBalanceUpdate={async (newBalance) => {
+                  await refreshProfile();
+                  // Portfolio frissítése is, ha van
+                  if (investmentTab === 'portfolio') {
+                    // A Portfolio komponens saját maga frissíti az adatokat
+                  }
+                }}
+              />
+            )}
+
+            {investmentTab === 'portfolio' && (
+              <Portfolio
+                user={user}
+                onBalanceUpdate={async (newBalance) => {
+                  await refreshProfile();
+                }}
+              />
+            )}
+          </section>
+        );
       default:
         return renderHome();
     }

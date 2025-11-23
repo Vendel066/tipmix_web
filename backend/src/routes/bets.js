@@ -1,6 +1,7 @@
 const express = require('express');
 const { pool, query } = require('../db');
 const { auth, requireAdmin } = require('../middleware/auth');
+const { checkCombos } = require('./combos');
 
 const router = express.Router();
 
@@ -87,7 +88,7 @@ router.get('/me/history', auth(), async (req, res) => {
   // Hozzáadni a lezárt combo fogadásokat is
   const comboRows = await query(
     `SELECT bc.id,
-            CONCAT('Kötés (', COUNT(cs.id), ' fogadás)') AS selection,
+            CAST(CONCAT('Kötés (', COUNT(cs.id), ' fogadás)') AS CHAR) AS selection,
             bc.total_stake AS stake,
             bc.potential_win,
             bc.status,
@@ -449,7 +450,6 @@ router.post('/:id/close', auth(), requireAdmin, async (req, res) => {
     );
 
     // Automatikusan ellenőrizni a combo fogadásokat
-    const { checkCombos } = require('./combos');
     if (checkCombos) {
       await checkCombos(connection);
     }

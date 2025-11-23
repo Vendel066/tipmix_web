@@ -8,6 +8,7 @@ USE `tipmix_app`;
 
 -- Táblák törlése (fordított sorrendben a foreign key-ek miatt)
 SET FOREIGN_KEY_CHECKS = 0;
+DROP TABLE IF EXISTS `stock_holdings`;
 DROP TABLE IF EXISTS `casino_games`;
 DROP TABLE IF EXISTS `combo_selections`;
 DROP TABLE IF EXISTS `bet_combos`;
@@ -150,6 +151,22 @@ CREATE TABLE `casino_games` (
   `status` ENUM('PENDING','WON','LOST') DEFAULT 'PENDING',
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_casino_games_user
+    FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
+    ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Részvény portfólió tábla
+CREATE TABLE `stock_holdings` (
+  `id` INT AUTO_INCREMENT PRIMARY KEY,
+  `user_id` INT NOT NULL,
+  `symbol` VARCHAR(10) NOT NULL,
+  `quantity` DECIMAL(10,2) NOT NULL,
+  `average_price` DECIMAL(12,2) NOT NULL,
+  `total_invested` DECIMAL(12,2) NOT NULL,
+  `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
+  `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY unique_user_stock (`user_id`, `symbol`),
+  CONSTRAINT fk_stock_holdings_user
     FOREIGN KEY (`user_id`) REFERENCES `users`(`id`)
     ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

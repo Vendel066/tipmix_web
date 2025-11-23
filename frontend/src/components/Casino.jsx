@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 import RouletteGame from './casino/RouletteGame';
-import MinesweeperGame from './casino/MinesweeperGame';
 
 export default function Casino({ user, onBalanceUpdate, onNotification }) {
   // localStorage-ból olvassuk be, hogy ne vesszen el újrarendereléskor
@@ -28,17 +27,10 @@ export default function Casino({ user, onBalanceUpdate, onNotification }) {
   const games = [
     {
       id: 'roulette',
-      name: 'Európai Rulett',
-      icon: '🎰',
+      name: 'Rulett',
+      icon: '🍀',
       description: 'Klasszikus rulett játék! Válassz számokat, színeket vagy egyéb kombinációkat és próbáld meg eltalálni a nyerő számot!',
       minBet: 500,
-    },
-    {
-      id: 'minesweeper',
-      name: 'Aknakereső',
-      icon: '💣',
-      description: 'Fedj fel biztonságos mezőket és növeld a szorzódat! De vigyázz, ne lépj aknára! Bármikor kiveheted a nyereményedet.',
-      minBet: 100,
     },
   ];
 
@@ -55,13 +47,6 @@ export default function Casino({ user, onBalanceUpdate, onNotification }) {
         </button>
         {selectedGame === 'roulette' && (
           <RouletteGame 
-            user={user} 
-            onBalanceUpdate={onBalanceUpdate}
-            onNotification={handleNotification}
-          />
-        )}
-        {selectedGame === 'minesweeper' && (
-          <MinesweeperGame 
             user={user} 
             onBalanceUpdate={onBalanceUpdate}
             onNotification={handleNotification}

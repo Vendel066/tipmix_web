@@ -5,6 +5,8 @@ const config = require('../config');
 
 async function resetSchema() {
   await query('SET FOREIGN_KEY_CHECKS = 0;');
+  await query('DROP TABLE IF EXISTS stock_holdings;');
+  await query('DROP TABLE IF EXISTS stocks;');
   await query('DROP TABLE IF EXISTS casino_games;');
   await query('DROP TABLE IF EXISTS bet_combos;');
   await query('DROP TABLE IF EXISTS combo_selections;');
@@ -136,6 +138,56 @@ async function createTables() {
       FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS stocks (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      symbol VARCHAR(10) NOT NULL UNIQUE,
+      name VARCHAR(255) NOT NULL,
+      price DECIMAL(10,2) NOT NULL,
+      change_percent DECIMAL(5,2) DEFAULT 0,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await query(`
+    CREATE TABLE IF NOT EXISTS stock_holdings (
+      id INT AUTO_INCREMENT PRIMARY KEY,
+      user_id INT NOT NULL,
+      symbol VARCHAR(20) NOT NULL,
+      name VARCHAR(255) NOT NULL,
+      quantity DECIMAL(10,4) NOT NULL,
+      average_price DECIMAL(10,2) NOT NULL,
+      total_invested DECIMAL(12,2) NOT NULL,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+      FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+      UNIQUE KEY unique_user_stock (user_id, symbol)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+}
+
+async function seedStocks() {
+  const stocks = [
+    { symbol: 'AAPL', name: 'Apple Inc.', price: 175.50 },
+    { symbol: 'GOOGL', name: 'Alphabet Inc.', price: 142.80 },
+    { symbol: 'MSFT', name: 'Microsoft Corp.', price: 378.90 },
+    { symbol: 'TSLA', name: 'Tesla Inc.', price: 248.20 },
+    { symbol: 'AMZN', name: 'Amazon.com Inc.', price: 145.30 },
+    { symbol: 'META', name: 'Meta Platforms', price: 312.40 },
+    { symbol: 'NVDA', name: 'NVIDIA Corp.', price: 485.60 },
+    { symbol: 'BTC', name: 'Bitcoin', price: 43250.00 },
+  ];
+
+  for (const stock of stocks) {
+    await query(
+      `INSERT INTO stocks (symbol, name, price, change_percent) 
+       VALUES (?, ?, ?, 0)
+       ON DUPLICATE KEY UPDATE name = VALUES(name), price = VALUES(price)`,
+      [stock.symbol, stock.name, stock.price]
+    );
+  }
+  console.log('Részvények inicializálva');
 }
 
 async function ensureAdminUser() {
@@ -158,6 +210,7 @@ async function bootstrap() {
   try {
     await resetSchema();
     await createTables();
+    await seedStocks();
     await ensureAdminUser();
     console.log('Adatbázis setup kész ✅');
     process.exit(0);

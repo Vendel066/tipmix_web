@@ -8,6 +8,7 @@ import HistoryTable from './components/HistoryTable';
 import Navbar from './components/Navbar';
 import PaymentModal from './components/PaymentModal';
 import Casino from './components/Casino';
+import Notification from './components/Notification';
 import { api } from './services/api';
 import { useAuth } from './hooks/useAuth';
 
@@ -21,6 +22,8 @@ function App() {
   const [globalLoading, setGlobalLoading] = useState(false);
   const [toast, setToast] = useState(null);
   const [paymentModal, setPaymentModal] = useState(null);
+  const [notification, setNotification] = useState(null);
+  const [notificationType, setNotificationType] = useState(null);
 
   const isAdmin = Boolean(user?.is_admin);
 
@@ -186,6 +189,11 @@ function App() {
         // Csak az animáció végén hívjuk meg, amikor a nyereményt is hozzáadjuk
         await refreshProfile();
       }}
+      onNotification={(message, type) => {
+        console.log('🎰 App: Értesítés érkezett:', message, type);
+        setNotification(message);
+        setNotificationType(type || (message.includes('GRATULÁLOK') || message.includes('🎉') ? 'win' : 'lose'));
+      }}
     />
   );
 
@@ -238,6 +246,15 @@ function App() {
           onSuccess={handlePaymentSuccess}
         />
       )}
+      <Notification
+        message={notification}
+        type={notificationType}
+        duration={4000}
+        onClose={() => {
+          setNotification(null);
+          setNotificationType(null);
+        }}
+      />
     </div>
   );
 }

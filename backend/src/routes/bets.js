@@ -106,7 +106,74 @@ router.get('/me/history', auth(), async (req, res) => {
     [req.user.id],
   );
 
-  const allBets = [...rows, ...comboRows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+  // Hozzáadni a kaszinó játékokat (rulett, stb.)
+  const casinoRows = await query(
+    `SELECT id,
+            game_type,
+            bet_amount AS stake,
+            win_amount AS potential_win,
+            status,
+            created_at,
+            NULL AS odds_snapshot,
+            CASE 
+              WHEN game_type = 'ROULETTE' THEN 'Rulett'
+              WHEN game_type = 'MINESWEEPER' THEN 'Aknakereső'
+              WHEN game_type = 'SLOT' THEN 'Szerencsekerék'
+              WHEN game_type = 'BLACKJACK' THEN 'Blackjack'
+              ELSE game_type
+            END AS title,
+            NULL AS result_outcome_id,
+            NULL AS result_label,
+            'casino' AS bet_type,
+            game_data
+       FROM casino_games
+      WHERE user_id = ?
+        AND status IN ('WON', 'LOST')
+      ORDER BY created_at DESC
+      LIMIT 50`,
+    [req.user.id],
+  );
+
+  // Formázás a casino játékokhoz
+  const formattedCasinoRows = casinoRows.map((row) => {
+    let selection = '';
+    let resultInfo = '';
+    
+    if (row.game_type === 'ROULETTE' && row.game_data) {
+      try {
+        const gameData = typeof row.game_data === 'string' ? JSON.parse(row.game_data) : row.game_data;
+        const winningNumber = gameData.winningNumber;
+        if (winningNumber !== undefined && winningNumber !== null) {
+          // Szám színe meghatározása
+          const redNumbers = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
+          let color = 'fekete';
+          if (winningNumber === 0) {
+            color = 'zöld';
+          } else if (redNumbers.includes(winningNumber)) {
+            color = 'piros';
+          }
+          
+          selection = `Rulett játék`;
+          resultInfo = `Nyerő szám: ${winningNumber} (${color})`;
+        } else {
+          selection = `Rulett játék`;
+        }
+      } catch (e) {
+        console.error('Error parsing game_data:', e);
+        selection = `Rulett játék`;
+      }
+    } else {
+      selection = row.title;
+    }
+    
+    return {
+      ...row,
+      selection: selection || row.title,
+      result_label: resultInfo,
+    };
+  });
+
+  const allBets = [...rows, ...comboRows, ...formattedCasinoRows].sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
   return res.json({ bets: allBets });
 });
 

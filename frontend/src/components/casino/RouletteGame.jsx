@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
 import { api } from '../../services/api';
+import WheelCenterNumber from './WheelCenterNumber';
 
 // Európai rulett számok és színek
 const ROULETTE_NUMBERS = [
@@ -42,23 +43,14 @@ const ROULETTE_NUMBERS = [
   { num: 26, color: 'black' },
 ];
 
-// Tábla elrendezés (3 oszlop, 12 sor)
-// Oszlop 1: 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36
-// Oszlop 2: 2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35
-// Oszlop 3: 1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34
+// Tábla elrendezés - VÍZSZINTES (3 sor, 12 oszlop)
+// Sor 1: 3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36
+// Sor 2: 2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35
+// Sor 3: 1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34
 const TABLE_LAYOUT = [
-  [3, 6, 9],
-  [2, 5, 8],
-  [1, 4, 7],
-  [12, 11, 10],
-  [15, 14, 13],
-  [18, 17, 16],
-  [21, 20, 19],
-  [24, 23, 22],
-  [27, 26, 25],
-  [30, 29, 28],
-  [33, 32, 31],
-  [36, 35, 34],
+  [3, 6, 9, 12, 15, 18, 21, 24, 27, 30, 33, 36], // Első sor
+  [2, 5, 8, 11, 14, 17, 20, 23, 26, 29, 32, 35], // Második sor
+  [1, 4, 7, 10, 13, 16, 19, 22, 25, 28, 31, 34], // Harmadik sor
 ];
 
 const RED_NUMBERS = [1, 3, 5, 7, 9, 12, 14, 16, 18, 19, 21, 23, 25, 27, 30, 32, 34, 36];
@@ -69,7 +61,7 @@ function getNumberColor(num) {
   return RED_NUMBERS.includes(num) ? 'red' : 'black';
 }
 
-export default function RouletteGame({ user, onBalanceUpdate }) {
+export default function RouletteGame({ user, onBalanceUpdate, onNotification }) {
   const [selectedChip, setSelectedChip] = useState(500);
   const [bets, setBets] = useState({}); // { "number": amount, "red": amount, "black": amount, stb. }
   const [isSpinning, setIsSpinning] = useState(false);
@@ -79,6 +71,7 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState(null);
   const [winMessage, setWinMessage] = useState(null);
+  const [currentRotation, setCurrentRotation] = useState(0); // Jelenlegi forgatási pozíció
 
   const chipValues = [500, 1000, 5000];
 
@@ -128,6 +121,7 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
     // setWinningNumber(null);
     // setFinalNumber(null); // NE null-ra, mert akkor nem jelenik meg!
     setLastResult(null);
+    // NE töröljük a finalNumber-t, hogy a középső szám továbbra is látható maradjon
     
     // Tét azonnali levonása (a backend-ben történik, de itt is frissítjük az egyenleget)
     // A backend-ben már levonódik a tét, szóval csak frissítjük a balance-t
@@ -157,6 +151,19 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
       });
 
       console.log('🎰 Formázott tétek:', formattedBets);
+      
+      // Biztosítjuk, hogy a token be van állítva
+      const token = localStorage.getItem('tipmix_token');
+      if (token) {
+        api.defaults.headers.common.Authorization = `Bearer ${token}`;
+        console.log('🎰 Token beállítva az API hívás előtt');
+      } else {
+        console.error('❌ Nincs token a localStorage-ban!');
+        setErrorMessage('Nincs bejelentkezve! Kérjük, jelentkezzen be újra.');
+        setIsSpinning(false);
+        setLoading(false);
+        return;
+      }
 
       const response = await api.post('/casino/roulette/spin', {
         bets: formattedBets,
@@ -206,16 +213,20 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
       // A nyíl a tetején van (0 fok), szóval a cél számot a tetejére kell forgatni
       const baseAngle = targetIndex * (360 / 37);
       // 3 teljes kör (1080 fok) + extra, hogy a cél szám a tetején legyen
-      const totalRotation = 1080 + (360 - baseAngle);
+      // Hozzáadjuk az aktuális forgatást, hogy ne ugorjon vissza
+      const totalRotation = currentRotation + 1080 + (360 - baseAngle);
       
-      console.log(`🎰 Kerék animáció: cél index=${targetIndex}, szög=${baseAngle.toFixed(2)}°, forgatás=${totalRotation.toFixed(2)}°`);
+      console.log(`🎰 Kerék animáció: cél index=${targetIndex}, szög=${baseAngle.toFixed(2)}°, összes forgatás=${totalRotation.toFixed(2)}°`);
+      
+      // Naplózás - játék kezdés
+      console.log(`🎰 Rulett játék kezdve: User ID=${user?.id}, Tétek=${JSON.stringify(formattedBets)}, Összes tét=${totalBet} HUF`);
       
       // Animáció időtartama - változó, addig pörög, amíg a középen lévő szám nem egyezik
       const minSpinDuration = 3000; // Minimum 3 másodperc
       const maxSpinDuration = 5000; // Maximum 5 másodperc
       const spinDuration = minSpinDuration + Math.random() * (maxSpinDuration - minSpinDuration);
       const startTime = Date.now();
-      let currentRotation = 0;
+      let currentAnimRotation = currentRotation;
       
       const animate = async () => {
         const elapsed = Date.now() - startTime;
@@ -223,17 +234,13 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
         
         // Ease-out animáció (lassul a végén)
         const easeOut = 1 - Math.pow(1 - progress, 3);
-        currentRotation = totalRotation * easeOut;
+        currentAnimRotation = currentRotation + (totalRotation - currentRotation) * easeOut;
         
         // Kerék forgatása
         const wheelElement = document.querySelector('.roulette-wheel');
         if (wheelElement) {
-          wheelElement.style.transform = `rotate(${currentRotation}deg)`;
+          wheelElement.style.transform = `rotate(${currentAnimRotation}deg)`;
         }
-        
-        // A középső szám mindig a nyerő számot mutatja (finalNumber)
-        // Nem frissítjük az animáció során, mert már be van állítva a finalNumber-ra
-        // setWinningNumber(finalNumber); // Már be van állítva, nem kell újra beállítani
         
         // Addig pörög, amíg az animáció nem fejeződik be
         const shouldContinue = progress < 1;
@@ -243,8 +250,28 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
         } else {
           // Animáció vége - a kerék a cél számnál van és a középen is a helyes szám van
           setIsSpinning(false);
+          // Frissítjük az aktuális forgatást, hogy a következő forgatás innen folytassa
+          // A totalRotation már tartalmazza az aktuális pozíciót és az új forgatást
+          // Csak a 360 fokon belüli értéket tároljuk, de az animRotation változót használjuk a pontos pozícióhoz
+          const finalRotation = currentAnimRotation % 360;
+          setCurrentRotation(finalRotation); // Csak a 360 fokon belüli érték
+          
+          // Biztosítjuk, hogy a kerék a helyes pozícióban maradjon
+          const wheelElement = document.querySelector('.roulette-wheel');
+          if (wheelElement) {
+            wheelElement.style.transform = `rotate(${finalRotation}deg)`;
+          }
+          
           // Biztosítjuk, hogy a középső szám a finalNumber legyen
           setWinningNumber(finalNum);
+          console.log('🎰 FinalNumber beállítása az animáció végén:', finalNum, 'típus:', typeof finalNum);
+          setFinalNumber(finalNum); // Biztosítjuk, hogy a középső szám megjelenjen
+          
+          // Kényszerítjük a re-render-t, hogy a WheelCenterNumber biztosan megkapja az új értéket
+          setTimeout(() => {
+            console.log('🎰 FinalNumber újra beállítva (setTimeout az animáció után):', finalNum);
+            setFinalNumber(finalNum);
+          }, 100);
           
           // Eredmény beállítása
           const winAmount = Number(response.data.winAmount) || 0;
@@ -255,32 +282,48 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
             newBalance: response.data.newBalance,
           };
           
+          // Naplózás
           console.log('🎰 Rulett eredmény:', result);
-          console.log('🎰 Nyerő szám:', finalNum);
+          console.log(`🎰 Rulett játék vége: User ID=${user?.id}, Nyerő szám=${finalNum}, Nyeremény=${winAmount} HUF, Tét=${response.data.totalBet} HUF`);
           console.log('🎰 Nyerő szám színe:', getNumberColor(finalNum));
-          console.log('🎰 Nyeremény összeg:', winAmount);
-          console.log('🎰 Total bet:', response.data.totalBet);
           
           setLastResult(result);
           setBets({});
           
-          // Nyeremény üzenet megjelenítése - MINDIG megjelenítjük
+          // Nyeremény üzenet megjelenítése - MINDIG megjelenítjük - LÁTVÁNYOSABB
+          // Hozzáadjuk a nyertes számot és színét az értesítéshez
+          const numberColor = getNumberColor(finalNum);
+          const colorText = numberColor === 'green' ? 'Zöld' : numberColor === 'red' ? 'Piros' : 'Fekete';
+          
+          // ÉRTESÍTÉS KÜLDÉSE - MINDIG KÜLDÜNK, NYERTÉL VAGY NEM NYERTÉL
+          let message;
+          let notificationType;
           if (winAmount > 0) {
-            const message = `🎉 Gratulálok! Ön ${winAmount.toLocaleString('hu-HU')} HUF-ot nyert!`;
-            console.log('🎰 Üzenet beállítása (nyert):', message);
-            setWinMessage(message);
-            setTimeout(() => {
-              console.log('🎰 Üzenet törlése (nyert)');
-              setWinMessage(null);
-            }, 10000);
+            message = `🎉 GRATULÁLOK! ${winAmount.toLocaleString('hu-HU')} HUF NYEREMÉNY! 🎉 Nyerő szám: ${finalNum} (${colorText})`;
+            notificationType = 'win';
           } else {
-            const message = `❌ Sajnos most nem nyert. Próbálja újra!`;
-            console.log('🎰 Üzenet beállítása (vesztett):', message);
-            setWinMessage(message);
-            setTimeout(() => {
-              console.log('🎰 Üzenet törlése (vesztett)');
-              setWinMessage(null);
-            }, 10000);
+            message = `❌ SAJNOS MOST NEM NYERT. PRÓBÁLJA ÚJRA! ❌ Nyerő szám: ${finalNum} (${colorText})`;
+            notificationType = 'lose';
+          }
+          
+          console.log('🎰 Üzenet beállítása:', message);
+          console.log('🎰 Értesítés típusa:', notificationType);
+          console.log('🎰 onNotification függvény típusa:', typeof onNotification);
+          console.log('🎰 onNotification függvény értéke:', onNotification);
+          
+          setWinMessage(message);
+          
+          // Értesítés küldése a parent komponensnek (Casino) - MINDIG
+          try {
+            if (onNotification && typeof onNotification === 'function') {
+              console.log('🎰 Értesítés küldése most:', message, notificationType);
+              onNotification(message, notificationType);
+              console.log('🎰 Értesítés elküldve!');
+            } else {
+              console.error('❌ onNotification nincs megadva vagy nem függvény!', { onNotification, type: typeof onNotification });
+            }
+          } catch (error) {
+            console.error('❌ Hiba az értesítés küldése során:', error);
           }
           
           // NYEREMÉNY HOZZÁADÁSA - CSAK AZ ANIMÁCIÓ VÉGÉN, amikor a kerék megállt!
@@ -330,13 +373,6 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
           {errorMessage}
         </div>
       )}
-      {winMessage && (
-        <div className="roulette-result-message">
-          <h2 className={winMessage.includes('Gratulálok') ? 'win' : 'lose'}>
-            {winMessage}
-          </h2>
-        </div>
-      )}
       <div className="roulette-controls">
         <div className="chip-selector">
           <label>Tét választó:</label>
@@ -383,23 +419,14 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
       <div className="roulette-container">
         <div className="roulette-wheel-section">
           <div className="wheel-container">
+            {/* Középső szám komponens - külön komponens, mutatja a nyertes számot */}
+            <WheelCenterNumber
+              finalNumber={finalNumber !== null && finalNumber !== undefined ? Number(finalNumber) : (lastResult?.winningNumber ?? null)}
+              isSpinning={isSpinning}
+            />
             <div className="wheel-wrapper">
-              <div className={`roulette-wheel ${isSpinning ? 'spinning' : ''}`} style={!isSpinning ? { transform: 'rotate(0deg)' } : {}}>
+              <div className={`roulette-wheel ${isSpinning ? 'spinning' : ''}`} style={{ transform: `rotate(${currentRotation}deg)` }}>
                 <div className="wheel-center">
-                  {/* Nyerő szám a középen */}
-                  <div className="wheel-center-result">
-                    {(() => {
-                      // Először a finalNumber-t nézzük, aztán a winningNumber-t, végül a lastResult-ot
-                      const displayNum = finalNumber !== null ? finalNumber : (winningNumber !== null ? winningNumber : (lastResult?.winningNumber ?? null));
-                      const numColor = displayNum !== null ? getNumberColor(displayNum) : 'default';
-                      const displayText = displayNum !== null ? String(displayNum) : '-';
-                      return (
-                        <h1 className={`wheel-center-number ${numColor}`}>
-                          {displayText}
-                        </h1>
-                      );
-                    })()}
-                  </div>
                   <div className="wheel-numbers-container">
                     {ROULETTE_NUMBERS.map((item, idx) => {
                       // Számoljuk ki a szöget (0-tól kezdve, óramutató járásával ellentétes irányba)
@@ -474,15 +501,16 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
 
             {/* Számok és oszlop fogadások */}
             <div className="main-table-area">
-              {/* Számok táblázat */}
-              <div className="numbers-grid">
-                {TABLE_LAYOUT.map((row, rowIdx) => (
-                  <div key={rowIdx} className="table-row">
-                    {row.map((num) => {
+              {/* Számok táblázat - vízszintes elrendezés (12 oszlop x 3 sor) + 2 to 1 oszlopok */}
+              <div className="numbers-grid-with-columns">
+                {/* Számok grid */}
+                <div className="numbers-grid">
+                  {TABLE_LAYOUT.map((row, rowIdx) => 
+                    row.map((num, colIdx) => {
                       const color = getNumberColor(num);
                       return (
                         <div
-                          key={num}
+                          key={`${rowIdx}-${colIdx}-${num}`}
                           className={`table-cell number ${color} ${getBetAmount('number', num) > 0 ? 'has-bet' : ''}`}
                           onClick={() => handlePlaceBet('number', num)}
                         >
@@ -494,71 +522,73 @@ export default function RouletteGame({ user, onBalanceUpdate }) {
                           )}
                         </div>
                       );
-                    })}
-                  </div>
-                ))}
-              </div>
+                    })
+                  )}
+                </div>
 
-              {/* Oszlop fogadások (2:1) - jobb oldalon */}
-              <div className="column-bets">
-                <div
-                  className={`table-cell column ${getBetAmount('column', 1) > 0 ? 'has-bet' : ''}`}
-                  onClick={() => handlePlaceBet('column', 1)}
-                >
-                  2 to 1
-                  {getBetAmount('column', 1) > 0 && (
-                    <div className="bet-chip">{getBetAmount('column', 1).toLocaleString('hu-HU')}</div>
-                  )}
-                </div>
-                <div
-                  className={`table-cell column ${getBetAmount('column', 2) > 0 ? 'has-bet' : ''}`}
-                  onClick={() => handlePlaceBet('column', 2)}
-                >
-                  2 to 1
-                  {getBetAmount('column', 2) > 0 && (
-                    <div className="bet-chip">{getBetAmount('column', 2).toLocaleString('hu-HU')}</div>
-                  )}
-                </div>
-                <div
-                  className={`table-cell column ${getBetAmount('column', 3) > 0 ? 'has-bet' : ''}`}
-                  onClick={() => handlePlaceBet('column', 3)}
-                >
-                  2 to 1
-                  {getBetAmount('column', 3) > 0 && (
-                    <div className="bet-chip">{getBetAmount('column', 3).toLocaleString('hu-HU')}</div>
-                  )}
+                {/* Oszlop fogadások (2:1) - jobbra, sorok végén */}
+                <div className="column-bets">
+                  <div
+                    className={`table-cell column ${getBetAmount('column', 1) > 0 ? 'has-bet' : ''}`}
+                    onClick={() => handlePlaceBet('column', 1)}
+                  >
+                    2 to 1
+                    {getBetAmount('column', 1) > 0 && (
+                      <div className="bet-chip">{getBetAmount('column', 1).toLocaleString('hu-HU')}</div>
+                    )}
+                  </div>
+                  <div
+                    className={`table-cell column ${getBetAmount('column', 2) > 0 ? 'has-bet' : ''}`}
+                    onClick={() => handlePlaceBet('column', 2)}
+                  >
+                    2 to 1
+                    {getBetAmount('column', 2) > 0 && (
+                      <div className="bet-chip">{getBetAmount('column', 2).toLocaleString('hu-HU')}</div>
+                    )}
+                  </div>
+                  <div
+                    className={`table-cell column ${getBetAmount('column', 3) > 0 ? 'has-bet' : ''}`}
+                    onClick={() => handlePlaceBet('column', 3)}
+                  >
+                    2 to 1
+                    {getBetAmount('column', 3) > 0 && (
+                      <div className="bet-chip">{getBetAmount('column', 3).toLocaleString('hu-HU')}</div>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
 
-            {/* Dozen fogadások */}
-            <div className="dozen-bets">
-              <div
-                className={`table-cell dozen ${getBetAmount('dozen', 1) > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('dozen', 1)}
-              >
-                1st 12
-                {getBetAmount('dozen', 1) > 0 && (
-                  <div className="bet-chip">{getBetAmount('dozen', 1).toLocaleString('hu-HU')}</div>
-                )}
-              </div>
-              <div
-                className={`table-cell dozen ${getBetAmount('dozen', 2) > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('dozen', 2)}
-              >
-                2nd 12
-                {getBetAmount('dozen', 2) > 0 && (
-                  <div className="bet-chip">{getBetAmount('dozen', 2).toLocaleString('hu-HU')}</div>
-                )}
-              </div>
-              <div
-                className={`table-cell dozen ${getBetAmount('dozen', 3) > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('dozen', 3)}
-              >
-                3rd 12
-                {getBetAmount('dozen', 3) > 0 && (
-                  <div className="bet-chip">{getBetAmount('dozen', 3).toLocaleString('hu-HU')}</div>
-                )}
+            {/* Dozen fogadások - pontosan a számok grid szerint 4-4 oszlopra */}
+            <div className="dozens-bets-wrapper">
+              <div className="dozens-bets">
+                <div
+                  className={`table-cell dozen ${getBetAmount('dozen', 1) > 0 ? 'has-bet' : ''}`}
+                  onClick={() => handlePlaceBet('dozen', 1)}
+                >
+                  1st 12
+                  {getBetAmount('dozen', 1) > 0 && (
+                    <div className="bet-chip">{getBetAmount('dozen', 1).toLocaleString('hu-HU')}</div>
+                  )}
+                </div>
+                <div
+                  className={`table-cell dozen ${getBetAmount('dozen', 2) > 0 ? 'has-bet' : ''}`}
+                  onClick={() => handlePlaceBet('dozen', 2)}
+                >
+                  2nd 12
+                  {getBetAmount('dozen', 2) > 0 && (
+                    <div className="bet-chip">{getBetAmount('dozen', 2).toLocaleString('hu-HU')}</div>
+                  )}
+                </div>
+                <div
+                  className={`table-cell dozen ${getBetAmount('dozen', 3) > 0 ? 'has-bet' : ''}`}
+                  onClick={() => handlePlaceBet('dozen', 3)}
+                >
+                  3rd 12
+                  {getBetAmount('dozen', 3) > 0 && (
+                    <div className="bet-chip">{getBetAmount('dozen', 3).toLocaleString('hu-HU')}</div>
+                  )}
+                </div>
               </div>
             </div>
 

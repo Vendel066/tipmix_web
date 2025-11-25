@@ -21,6 +21,20 @@ export function setAuthToken(token) {
   }
 }
 
+// Request interceptor - minden kérésnél biztosítjuk, hogy legyen token a headerben
+api.interceptors.request.use(
+  (config) => {
+    const token = localStorage.getItem('tipmix_token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => {
+    return Promise.reject(error);
+  }
+);
+
 // Response interceptor - token hibák kezelése
 api.interceptors.response.use(
   (response) => response,

@@ -159,9 +159,10 @@ CREATE TABLE `casino_games` (
 CREATE TABLE `stock_holdings` (
   `id` INT AUTO_INCREMENT PRIMARY KEY,
   `user_id` INT NOT NULL,
-  `symbol` VARCHAR(10) NOT NULL,
-  `quantity` DECIMAL(10,2) NOT NULL,
-  `average_price` DECIMAL(12,2) NOT NULL,
+  `symbol` VARCHAR(20) NOT NULL,
+  `name` VARCHAR(255) NOT NULL,
+  `quantity` DECIMAL(10,4) NOT NULL,
+  `average_price` DECIMAL(10,2) NOT NULL,
   `total_invested` DECIMAL(12,2) NOT NULL,
   `created_at` DATETIME DEFAULT CURRENT_TIMESTAMP,
   `updated_at` DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
@@ -183,4 +184,8 @@ VALUES (
   1
 )
 ON DUPLICATE KEY UPDATE email = email;
+
+-- Megjegyzés: A részvények közvetlenül a Yahoo Finance API-ból jönnek,
+-- ezért nincs szükség stocks táblára az adatbázisban.
+-- A stock_holdings tábla a felhasználók részvény portfólióját tárolja.
 

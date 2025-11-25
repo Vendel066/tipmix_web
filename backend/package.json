@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "nodemon src/server.js",
     "start": "node src/server.js",
-    "db:setup": "node src/scripts/initDb.js"
+    "db:setup": "node src/scripts/initDb.js",
+    "db:migrate": "node src/scripts/migrateStockHoldings.js"
   },
   "keywords": [],
   "author": "",

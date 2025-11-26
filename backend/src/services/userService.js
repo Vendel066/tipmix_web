@@ -4,8 +4,13 @@ const { query } = require('../db');
 const config = require('../config');
 
 async function findUserByEmail(email) {
-  const rows = await query('SELECT * FROM users WHERE email = ?', [email]);
-  return rows[0];
+  try {
+    const rows = await query('SELECT * FROM users WHERE email = ?', [email]);
+    return rows[0];
+  } catch (err) {
+    console.error('findUserByEmail hiba:', err);
+    throw err;
+  }
 }
 
 async function findUserById(id) {

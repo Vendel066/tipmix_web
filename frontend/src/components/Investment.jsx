@@ -213,11 +213,6 @@ export default function Investment({ user, onBalanceUpdate }) {
             placeholder="Keresés részvény szimbólum szerint (pl: AAPL, MSFT, TSLA)..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            onBlur={(e) => {
-              if (e.target.value.trim()) {
-                loadStocks(e.target.value.trim());
-              }
-            }}
             style={{
               width: '100%',
               padding: '1rem 1rem 1rem 3rem',
@@ -236,6 +231,9 @@ export default function Investment({ user, onBalanceUpdate }) {
             onBlur={(e) => {
               e.target.style.borderColor = 'rgba(148, 163, 184, 0.2)';
               e.target.style.boxShadow = 'none';
+              if (e.target.value.trim()) {
+                loadStocks(e.target.value.trim());
+              }
             }}
           />
         </div>

@@ -39,8 +39,11 @@ async function createTables() {
       result_outcome_id INT NULL,
       closes_at DATETIME NULL,
       created_by INT NULL,
+      parent_bet_id INT NULL,
+      minimum_bet DECIMAL(10,2) DEFAULT 100.00,
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+      FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL,
+      FOREIGN KEY (parent_bet_id) REFERENCES bets(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
 

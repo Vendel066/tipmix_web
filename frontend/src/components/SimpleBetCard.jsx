@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
-import SimpleBetCard from './SimpleBetCard';
 
-export default function BetCard({ bet, onPlaceBet, disabled }) {
+// Egyszerűsített BetCard a modal-ban használatra (nincs benne modal)
+export default function SimpleBetCard({ bet, onPlaceBet, disabled }) {
   const [selectionId, setSelectionId] = useState(null);
   const [stake, setStake] = useState(2000);
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
-  const [showDetails, setShowDetails] = useState(false);
 
   const minimumBet = bet.minimum_bet || 100;
-  const detailBets = bet.detail_bets || [];
 
   useEffect(() => {
     if (bet.outcomes?.length) {
@@ -44,6 +42,9 @@ export default function BetCard({ bet, onPlaceBet, disabled }) {
     try {
       await onPlaceBet(bet.id, selectionId, Number(stake));
       setMessage('Fogadás leadva ✅');
+      setTimeout(() => {
+        setMessage('');
+      }, 2000);
     } catch (err) {
       const msg = err?.response?.data?.message || 'Nem sikerült leadni a fogadást.';
       setMessage(msg);
@@ -59,20 +60,8 @@ export default function BetCard({ bet, onPlaceBet, disabled }) {
       </div>
       <div className="bet-card__body">
         <div className="bet-card__info">
-          <div style={{ flex: 1 }}>
-            <h3>{bet.title}</h3>
-            {bet.description && <p>{bet.description}</p>}
-            {detailBets && detailBets.length > 0 && (
-              <button
-                type="button"
-                className="button-small"
-                onClick={() => setShowDetails(!showDetails)}
-                style={{ whiteSpace: 'nowrap', marginTop: '0.75rem' }}
-              >
-                {showDetails ? 'Elrejtés' : `Részletek (${detailBets.length})`}
-              </button>
-            )}
-          </div>
+          <h3>{bet.title}</h3>
+          {bet.description && <p>{bet.description}</p>}
         </div>
         <div className="bet-card__options modern">
           {bet.outcomes?.map((outcome) => (
@@ -112,21 +101,7 @@ export default function BetCard({ bet, onPlaceBet, disabled }) {
           <p>Leadási határidő: {new Date(bet.closes_at).toLocaleString()}</p>
         </div>
       )}
-      {message && <p className="form-feedback subtle">{message}</p>}
-      
-      {showDetails && detailBets && detailBets.length > 0 && (
-        <div className="bet-details-expanded">
-          <div className="bet-details-header">
-            <h4>Részlet fogadások</h4>
-            <p className="muted-small">Ezek külön fogadások, amikkel külön-külön vagy kötésben is lehet fogadni</p>
-          </div>
-          <div className="bet-details-grid">
-            {detailBets.map((detailBet) => (
-              <SimpleBetCard key={detailBet.id} bet={detailBet} onPlaceBet={onPlaceBet} disabled={disabled} />
-            ))}
-          </div>
-        </div>
-      )}
+      {message && <p className={`form-feedback ${message.includes('✅') ? 'success' : 'error'}`}>{message}</p>}
     </div>
   );
 }

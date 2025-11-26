@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { api } from '../services/api';
 
 export default function ComboBetCard({ bets, onSuccess }) {
@@ -62,29 +62,49 @@ export default function ComboBetCard({ bets, onSuccess }) {
     }
   };
 
+  // Összes fogadás összegyűjtése (fő + részlet fogadások)
+  const allAvailableBets = useMemo(() => {
+    return bets.flatMap((bet) => {
+      const detailBets = bet.detail_bets || [];
+      // Fő fogadás + részlet fogadások = külön fogadások
+      return [
+        { ...bet, isDetail: false },
+        ...detailBets.map((db) => ({ ...db, isDetail: true, parentTitle: bet.title })),
+      ].filter((b) => b.outcomes && b.outcomes.length > 0);
+    });
+  }, [bets]);
+
   return (
     <div className="combo-bet-card">
       <div className="combo-bet-header">
         <h3>Kötéses fogadás</h3>
         <p className="muted-small">Válassz ki legalább 2 fogadást és add le együtt (15% bónusz szorzó)</p>
+        {allAvailableBets.length < 2 && (
+          <p className="muted-small" style={{ color: '#f87171', marginTop: '0.5rem' }}>
+            Legalább 2 fogadás szükséges (jelenleg {allAvailableBets.length} elérhető)
+          </p>
+        )}
       </div>
 
       <div className="combo-bets-grid">
-        {bets.map((bet) => (
-          <div key={bet.id} className="combo-bet-item">
+        {allAvailableBets.map((currentBet) => (
+          <div key={currentBet.id} className="combo-bet-item">
             <div className="combo-bet-title">
-              <strong>{bet.title}</strong>
+              <strong>
+                {currentBet.isDetail ? `${currentBet.parentTitle} - ${currentBet.title}` : currentBet.title}
+              </strong>
+              {currentBet.isDetail && <span className="badge-small">Részlet</span>}
             </div>
             <div className="combo-bet-outcomes">
-              {bet.outcomes?.map((outcome) => {
-                const key = `${bet.id}-${outcome.id}`;
+              {currentBet.outcomes.map((outcome) => {
+                const key = `${currentBet.id}-${outcome.id}`;
                 const isSelected = Boolean(selections[key]);
                 return (
                   <button
                     key={outcome.id}
                     type="button"
                     className={isSelected ? 'active' : ''}
-                    onClick={() => handleToggleSelection(bet.id, outcome.id, outcome.label, outcome.odds)}
+                    onClick={() => handleToggleSelection(currentBet.id, outcome.id, outcome.label, outcome.odds)}
                   >
                     <span>{outcome.label}</span>
                     <strong>{Number(outcome.odds).toFixed(2)}</strong>

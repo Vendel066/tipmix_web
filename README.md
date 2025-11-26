@@ -54,15 +54,27 @@ CREATE DATABASE tipmix_app CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 ```bash
 # Backend
-npm run dev      # nodemon
-npm run start    # production mód
-npm run db:setup # táblák + admin létrehozás
+npm run dev                    # nodemon
+npm run start                  # production mód
+npm run db:setup               # táblák + admin létrehozás
+npm run db:migrate:bet-details # részlet fogadások migráció (parent_bet_id, minimum_bet mezők)
 
 # Frontend
 npm run dev      # fejlesztői mód
 npm run build    # production build
 npm run preview  # build előnézete
 ```
+
+## Migrációk
+
+Ha már létező adatbázist használsz és hozzá szeretnéd adni az új funkciókat (részlet fogadások, minimum bet), futtasd le:
+
+```bash
+cd backend
+npm run db:migrate:bet-details
+```
+
+Ez automatikusan hozzáadja a `parent_bet_id` és `minimum_bet` mezőket a `bets` táblához, ha még nem léteznek.
 
 ## További tippek
 

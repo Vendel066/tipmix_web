@@ -49,18 +49,70 @@ async function attachOutcomes(bets) {
 }
 
 router.get('/', async (_req, res) => {
-  const bets = await query(
-    `SELECT id, title, description, status, result_outcome_id, created_at, closes_at
+  // Próbáljuk meg lekérdezni a mezőket, ha hiányoznak, akkor használjunk NULL-t
+  let bets;
+  try {
+    bets = await query(
+      `SELECT id, title, description, status, result_outcome_id, created_at, closes_at, 
+              COALESCE(parent_bet_id, NULL) as parent_bet_id, 
+              COALESCE(minimum_bet, 100.00) as minimum_bet
        FROM bets
-      WHERE status = 'OPEN'
+      WHERE status = 'OPEN' AND (parent_bet_id IS NULL OR parent_bet_id = 0)
       ORDER BY created_at DESC`,
-  );
+    );
+  } catch (err) {
+    // Ha a mezők még nem léteznek, próbáljuk meg anélkül
+    if (err.message.includes('Unknown column')) {
+      bets = await query(
+        `SELECT id, title, description, status, result_outcome_id, created_at, closes_at
+         FROM bets
+        WHERE status = 'OPEN'
+        ORDER BY created_at DESC`,
+      );
+      // Hozzáadni az alapértelmezett értékeket
+      bets = bets.map((bet) => ({ ...bet, parent_bet_id: null, minimum_bet: 100 }));
+    } else {
+      throw err;
+    }
+  }
   const enriched = await attachOutcomes(
     bets.map((bet) => ({
       ...bet,
       status: bet.status,
+      minimum_bet: Number(bet.minimum_bet) || 100,
     })),
   );
+  
+  // Hozzáadni a részlet fogadásokat minden fő fogadáshoz
+  for (const bet of enriched) {
+    let detailBets = [];
+    try {
+      detailBets = await query(
+        `SELECT id, title, description, status, result_outcome_id, created_at, closes_at, 
+                COALESCE(minimum_bet, 100.00) as minimum_bet
+         FROM bets
+        WHERE parent_bet_id = ? AND status = 'OPEN'
+        ORDER BY created_at ASC`,
+        [bet.id],
+      );
+    } catch (err) {
+      // Ha a parent_bet_id mező még nem létezik, nincs részlet fogadás
+      if (!err.message.includes('Unknown column')) {
+        throw err;
+      }
+    }
+    if (detailBets.length > 0) {
+      const detailBetsEnriched = await attachOutcomes(
+        detailBets.map((db) => ({
+          ...db,
+          status: db.status,
+          minimum_bet: Number(db.minimum_bet) || 100,
+        })),
+      );
+      bet.detail_bets = detailBetsEnriched;
+    }
+  }
+  
   return res.json({ bets: enriched });
 });
 
@@ -222,13 +274,58 @@ router.get('/me/active', auth(), async (req, res) => {
 });
 
 router.get('/admin', auth(), requireAdmin, async (_req, res) => {
-  const bets = await query(
-    `SELECT id, title, description, status, result_outcome_id,
-            created_at, closes_at
+  let bets;
+  try {
+    bets = await query(
+      `SELECT id, title, description, status, result_outcome_id,
+              created_at, closes_at, 
+              COALESCE(parent_bet_id, NULL) as parent_bet_id, 
+              COALESCE(minimum_bet, 100.00) as minimum_bet
        FROM bets
       ORDER BY created_at DESC`,
+    );
+  } catch (err) {
+    // Ha a mezők még nem léteznek, próbáljuk meg anélkül
+    if (err.message.includes('Unknown column')) {
+      bets = await query(
+        `SELECT id, title, description, status, result_outcome_id, created_at, closes_at
+         FROM bets
+        ORDER BY created_at DESC`,
+      );
+      bets = bets.map((bet) => ({ ...bet, parent_bet_id: null, minimum_bet: 100 }));
+    } else {
+      throw err;
+    }
+  }
+  const enriched = await attachOutcomes(
+    bets.map((bet) => ({
+      ...bet,
+      minimum_bet: Number(bet.minimum_bet) || 100,
+    })),
   );
-  const enriched = await attachOutcomes(bets);
+  
+  // Hozzáadni a részlet fogadásokat minden fő fogadáshoz
+  for (const bet of enriched) {
+    if (!bet.parent_bet_id) {
+      const detailBets = await query(
+        `SELECT id, title, description, status, result_outcome_id, created_at, closes_at, minimum_bet
+         FROM bets
+        WHERE parent_bet_id = ?
+        ORDER BY created_at ASC`,
+        [bet.id],
+      );
+      if (detailBets.length > 0) {
+        const detailBetsEnriched = await attachOutcomes(
+          detailBets.map((db) => ({
+            ...db,
+            minimum_bet: Number(db.minimum_bet) || 100,
+          })),
+        );
+        bet.detail_bets = detailBetsEnriched;
+      }
+    }
+  }
+  
   return res.json({ bets: enriched });
 });
 
@@ -238,6 +335,9 @@ router.post('/', auth(), requireAdmin, async (req, res) => {
     description,
     closes_at: closesAt,
     outcomes,
+    parent_bet_id: parentBetId,
+    minimum_bet: minimumBet,
+    detail_bets: detailBets,
   } = req.body;
 
   if (!title || typeof title !== 'string') {
@@ -258,14 +358,45 @@ router.post('/', auth(), requireAdmin, async (req, res) => {
     return res.status(400).json({ message: 'Érvényes kimeneti nevek és oddsok szükségesek' });
   }
 
+  const numericMinimumBet = minimumBet ? Number(minimumBet) : 100;
+  if (numericMinimumBet < 0) {
+    return res.status(400).json({ message: 'A minimum tét nem lehet negatív' });
+  }
+
   const connection = await pool.getConnection();
   try {
     await connection.beginTransaction();
-    const [result] = await connection.execute(
-      `INSERT INTO bets (title, description, closes_at, created_by)
-       VALUES (?, ?, ?, ?)`,
-      [title, description || '', closesAt || null, req.user.id],
-    );
+    
+    // Ha van parent_bet_id, ellenőrizni hogy létezik-e
+    if (parentBetId) {
+      const [parentBet] = await connection.execute(
+        'SELECT id FROM bets WHERE id = ?',
+        [parentBetId],
+      );
+      if (!parentBet.length) {
+        throw new Error('PARENT_NOT_FOUND');
+      }
+    }
+
+    let result;
+    try {
+      [result] = await connection.execute(
+        `INSERT INTO bets (title, description, closes_at, created_by, parent_bet_id, minimum_bet)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [title, description || '', closesAt || null, req.user.id, parentBetId || null, numericMinimumBet],
+      );
+    } catch (err) {
+      // Ha a mezők még nem léteznek, próbáljuk meg anélkül
+      if (err.message.includes('Unknown column')) {
+        [result] = await connection.execute(
+          `INSERT INTO bets (title, description, closes_at, created_by)
+           VALUES (?, ?, ?, ?)`,
+          [title, description || '', closesAt || null, req.user.id],
+        );
+      } else {
+        throw err;
+      }
+    }
 
     const betId = result.insertId;
     for (const outcome of sanitizedOutcomes) {
@@ -276,15 +407,128 @@ router.post('/', auth(), requireAdmin, async (req, res) => {
       );
     }
 
+    // Ha van részlet fogadás, azt is létrehozni
+    if (Array.isArray(detailBets) && detailBets.length > 0 && !parentBetId) {
+      for (const detailBet of detailBets) {
+        if (!detailBet.title || !Array.isArray(detailBet.outcomes) || detailBet.outcomes.length < 2) {
+          continue;
+        }
+        
+        const detailOutcomes = detailBet.outcomes.map((outcome, index) => ({
+          label: outcome.label?.trim(),
+          odds: Number(outcome.odds),
+          order_index: index,
+        }));
+
+        if (detailOutcomes.some((outcome) => !outcome.label || !outcome.odds || outcome.odds <= 1)) {
+          continue;
+        }
+
+        const detailMinimumBet = detailBet.minimum_bet ? Number(detailBet.minimum_bet) : 100;
+        let detailResult;
+        try {
+          [detailResult] = await connection.execute(
+            `INSERT INTO bets (title, description, closes_at, created_by, parent_bet_id, minimum_bet)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [detailBet.title, detailBet.description || '', detailBet.closes_at || null, req.user.id, betId, detailMinimumBet],
+          );
+        } catch (err) {
+          // Ha a mezők még nem léteznek, próbáljuk meg anélkül
+          if (err.message.includes('Unknown column')) {
+            [detailResult] = await connection.execute(
+              `INSERT INTO bets (title, description, closes_at, created_by)
+               VALUES (?, ?, ?, ?)`,
+              [detailBet.title, detailBet.description || '', detailBet.closes_at || null, req.user.id],
+            );
+          } else {
+            throw err;
+          }
+        }
+
+        const detailBetId = detailResult.insertId;
+        for (const outcome of detailOutcomes) {
+          await connection.execute(
+            `INSERT INTO bet_outcomes (bet_id, label, odds, base_odds, order_index)
+             VALUES (?, ?, ?, ?, ?)`,
+            [detailBetId, outcome.label, outcome.odds, outcome.odds, outcome.order_index],
+          );
+        }
+      }
+    }
+
     await connection.commit();
-    const [bet] = await query('SELECT id, title, description, status, result_outcome_id, created_at, closes_at FROM bets WHERE id = ?', [betId]);
-    const enriched = await attachOutcomes([bet]);
-    return res.status(201).json({ bet: enriched[0] });
-  } catch (err) {
-    await connection.rollback();
-    return res.status(500).json({ message: 'Hiba történt a fogadás létrehozásakor' });
-  } finally {
     connection.release();
+    
+    // Lekérdezés a transaction után (új kapcsolat)
+    let betRows;
+    try {
+      betRows = await query(
+        'SELECT id, title, description, status, result_outcome_id, created_at, closes_at, COALESCE(parent_bet_id, NULL) as parent_bet_id, COALESCE(minimum_bet, 100.00) as minimum_bet FROM bets WHERE id = ?',
+        [betId],
+      );
+    } catch (err) {
+      if (err.message.includes('Unknown column')) {
+        betRows = await query(
+          'SELECT id, title, description, status, result_outcome_id, created_at, closes_at FROM bets WHERE id = ?',
+          [betId],
+        );
+        betRows = betRows.map((b) => ({ ...b, parent_bet_id: null, minimum_bet: 100 }));
+      } else {
+        throw err;
+      }
+    }
+    
+    const enriched = await attachOutcomes(
+      betRows.map((b) => ({
+        ...b,
+        minimum_bet: Number(b.minimum_bet) || 100,
+      })),
+    );
+    
+    // Hozzáadni a részlet fogadásokat, ha van
+    const resultBet = enriched[0];
+    if (resultBet && !resultBet.parent_bet_id) {
+      let detailBets = [];
+      try {
+        detailBets = await query(
+          `SELECT id, title, description, status, result_outcome_id, created_at, closes_at, COALESCE(minimum_bet, 100.00) as minimum_bet
+           FROM bets
+          WHERE parent_bet_id = ? AND status = 'OPEN'
+          ORDER BY created_at ASC`,
+          [resultBet.id],
+        );
+      } catch (err) {
+        if (!err.message.includes('Unknown column')) {
+          throw err;
+        }
+      }
+      
+      if (detailBets.length > 0) {
+        const detailBetsEnriched = await attachOutcomes(
+          detailBets.map((db) => ({
+            ...db,
+            status: db.status,
+            minimum_bet: Number(db.minimum_bet) || 100,
+          })),
+        );
+        resultBet.detail_bets = detailBetsEnriched;
+      }
+    }
+    
+    return res.status(201).json({ bet: resultBet });
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+    }
+    if (err.message === 'PARENT_NOT_FOUND') {
+      return res.status(400).json({ message: 'A szülő fogadás nem található' });
+    }
+    console.error('Fogadás létrehozási hiba:', err);
+    return res.status(500).json({ message: 'Hiba történt a fogadás létrehozásakor: ' + err.message });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 });
 
@@ -315,19 +559,42 @@ router.post('/:id/place', auth(), async (req, res) => {
   }
 
   const connection = await pool.getConnection();
+  let minimumBet = 100;
   try {
     await connection.beginTransaction();
 
-    const [betRows] = await connection.execute(
-      `SELECT id, title, status
+    let betRows;
+    try {
+      [betRows] = await connection.execute(
+        `SELECT id, title, status, COALESCE(minimum_bet, 100.00) as minimum_bet
          FROM bets
         WHERE id = ?
         FOR UPDATE`,
-      [betId],
-    );
+        [betId],
+      );
+    } catch (err) {
+      // Ha a minimum_bet mező még nem létezik
+      if (err.message.includes('Unknown column')) {
+        [betRows] = await connection.execute(
+          `SELECT id, title, status
+           FROM bets
+          WHERE id = ?
+          FOR UPDATE`,
+          [betId],
+        );
+        betRows[0].minimum_bet = 100;
+      } else {
+        throw err;
+      }
+    }
     const bet = betRows[0];
     if (!bet || bet.status !== 'OPEN') {
       throw new Error('NOT_AVAILABLE');
+    }
+
+    minimumBet = Number(bet.minimum_bet) || 100;
+    if (numericStake < minimumBet) {
+      throw new Error('BELOW_MINIMUM');
     }
 
     const [outcomeRows] = await connection.execute(
@@ -384,6 +651,7 @@ router.post('/:id/place', auth(), async (req, res) => {
       NOT_AVAILABLE: { status: 400, message: 'A fogadás nem elérhető' },
       OUTCOME_NOT_FOUND: { status: 400, message: 'A kiválasztott opció nem található' },
       NO_BALANCE: { status: 400, message: 'Nincs elegendő egyenleg' },
+      BELOW_MINIMUM: { status: 400, message: `A minimum tét ${minimumBet} Ft` },
     };
     if (map[err.message]) {
       return res.status(map[err.message].status).json({ message: map[err.message].message });

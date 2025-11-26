@@ -26,6 +26,7 @@ async function createTables() {
       password_hash VARCHAR(255) NOT NULL,
       balance DECIMAL(12,2) DEFAULT 0,
       is_admin TINYINT(1) DEFAULT 0,
+      badge ENUM('NONE', 'BRONZE', 'SILVER', 'GOLD', 'ADMIN') DEFAULT 'NONE',
       created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
@@ -90,7 +91,7 @@ async function createTables() {
     CREATE TABLE IF NOT EXISTS transactions (
       id INT AUTO_INCREMENT PRIMARY KEY,
       user_id INT NOT NULL,
-      type ENUM('WITHDRAWAL','DEPOSIT') NOT NULL,
+      type ENUM('WITHDRAWAL','DEPOSIT','TRANSFER_OUT','TRANSFER_IN') NOT NULL,
       amount DECIMAL(12,2) NOT NULL,
       status ENUM('PENDING','APPROVED','REJECTED','COMPLETED') DEFAULT 'PENDING',
       processed_by INT NULL,

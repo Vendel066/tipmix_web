@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
 import { api } from '../../services/api';
 import WheelCenterNumber from './WheelCenterNumber';
 
@@ -64,6 +64,35 @@ function getNumberColor(num) {
 export default function RouletteGame({ user, onBalanceUpdate, onNotification }) {
   const [selectedChip, setSelectedChip] = useState(500);
   const [bets, setBets] = useState({}); // { "number": amount, "red": amount, "black": amount, stb. }
+  
+  // localStorage-ból olvassuk be a lastBets-et, hogy ne vesszen el újrarendereléskor
+  const [lastBets, setLastBets] = useState(() => {
+    try {
+      const saved = localStorage.getItem('roulette_last_bets');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      console.error('🎰 Hiba a lastBets betöltésekor:', e);
+      return null;
+    }
+  });
+  
+  const lastBetsRef = useRef(null); // Ref, hogy biztosan megmaradjon
+  
+  // Mentjük localStorage-ba amikor változik
+  useEffect(() => {
+    if (lastBets) {
+      try {
+        localStorage.setItem('roulette_last_bets', JSON.stringify(lastBets));
+        lastBetsRef.current = lastBets;
+        console.log('🎰 lastBets elmentve localStorage-ba:', lastBets);
+      } catch (e) {
+        console.error('🎰 Hiba a lastBets mentésekor:', e);
+      }
+    } else {
+      // Ha null, akkor ne töröljük, csak ha explicit módon kérjük
+      // localStorage.removeItem('roulette_last_bets');
+    }
+  }, [lastBets]);
   const [isSpinning, setIsSpinning] = useState(false);
   const [winningNumber, setWinningNumber] = useState(null);
   const [finalNumber, setFinalNumber] = useState(null); // A backend-től kapott végső nyerő szám
@@ -73,44 +102,224 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
   const [winMessage, setWinMessage] = useState(null);
   const [currentRotation, setCurrentRotation] = useState(0); // Jelenlegi forgatási pozíció
 
-  const chipValues = [500, 1000, 5000];
+  const chipValues = [500, 1000, 5000, 10000, 20000];
+
+  // Összes tét számítása
+  const totalBetAmount = useMemo(() => {
+    return Object.values(bets).reduce((sum, amount) => sum + amount, 0);
+  }, [bets]);
+
+  // Elérhető egyenleg (jelenlegi egyenleg - összes tét)
+  const availableBalance = useMemo(() => {
+    return Number(user?.balance || 0) - totalBetAmount;
+  }, [user?.balance, totalBetAmount]);
+
+  // Előző tét gomb állapota - közvetlen számítás (nem useMemo)
+  // Használjuk a ref-et és localStorage-t is, ha a state törlődik
+  const getCanRepeatLastBets = () => {
+    if (isSpinning || loading) return false;
+    // Először próbáljuk a state-et, ha az nincs, akkor a ref-et, végül a localStorage-t
+    let betsToCheck = lastBets || lastBetsRef.current;
+    
+    // Ha még mindig nincs, próbáljuk a localStorage-t
+    if (!betsToCheck) {
+      try {
+        const saved = localStorage.getItem('roulette_last_bets');
+        if (saved) {
+          betsToCheck = JSON.parse(saved);
+          console.log('🎰 lastBets betöltve localStorage-ból:', betsToCheck);
+          // Visszaállítjuk a state-et is
+          if (betsToCheck) {
+            setLastBets(betsToCheck);
+            lastBetsRef.current = betsToCheck;
+          }
+        }
+      } catch (e) {
+        console.error('🎰 Hiba a lastBets betöltésekor localStorage-ból:', e);
+      }
+    }
+    
+    if (!betsToCheck) return false;
+    const lastBetsKeys = Object.keys(betsToCheck);
+    if (lastBetsKeys.length === 0) return false;
+    const lastBetsTotal = Object.values(betsToCheck).reduce((sum, amount) => sum + amount, 0);
+    const currentBalance = Number(user?.balance || 0);
+    return currentBalance >= lastBetsTotal;
+  };
+  
+  const canRepeatLastBets = getCanRepeatLastBets();
+
+  // Debug: figyeljük a lastBets változását
+  useEffect(() => {
+    console.log('🎰 ===== lastBets változott =====');
+    console.log('🎰 lastBets:', lastBets);
+    console.log('🎰 lastBets típusa:', typeof lastBets);
+    console.log('🎰 lastBets null?', lastBets === null);
+    console.log('🎰 lastBets undefined?', lastBets === undefined);
+    if (lastBets) {
+      const keys = Object.keys(lastBets);
+      console.log('🎰 lastBets kulcsok:', keys);
+      console.log('🎰 lastBets kulcsok száma:', keys.length);
+      console.log('🎰 lastBets értékek:', Object.values(lastBets));
+      const total = Object.values(lastBets).reduce((sum, amount) => sum + amount, 0);
+      console.log('🎰 lastBets összesen:', total);
+      console.log('🎰 canRepeatLastBets most:', getCanRepeatLastBets());
+      console.log('🎰 isSpinning:', isSpinning, 'loading:', loading);
+    } else {
+      console.log('🎰 lastBets NINCS beállítva!');
+    }
+    console.log('🎰 ============================');
+  }, [lastBets, isSpinning, loading, user?.balance]);
+
+  // Ellenőrizzük, hogy a lastBets megmarad-e a pörgés után
+  useEffect(() => {
+    if (!isSpinning && !loading && lastBets) {
+      console.log('🎰 Pörgés befejezve, lastBets még mindig itt van:', lastBets);
+      console.log('🎰 lastBets kulcsok száma:', Object.keys(lastBets).length);
+    }
+  }, [isSpinning, loading, lastBets]);
 
   const handlePlaceBet = useCallback((betType, value) => {
     if (isSpinning || loading) return;
     
-    if (Number(user?.balance || 0) < selectedChip) {
-      setErrorMessage('Nincs elegendő egyenleg!');
-      setTimeout(() => setErrorMessage(null), 3000);
+    const key = `${betType}_${value}`;
+    const currentBetOnThisPosition = bets[key] || 0;
+    const newBetOnThisPosition = currentBetOnThisPosition + selectedChip;
+    const totalBetAfterThis = totalBetAmount - currentBetOnThisPosition + newBetOnThisPosition;
+    
+    // Ellenőrizzük, hogy az összes tét (beleértve az új tétet is) nem haladja-e meg az egyenleget
+    if (Number(user?.balance || 0) < totalBetAfterThis) {
+      setErrorMessage(`Nincs elegendő egyenleg! Összes tét: ${totalBetAfterThis.toLocaleString('hu-HU')} HUF, Elérhető: ${Number(user?.balance || 0).toLocaleString('hu-HU')} HUF`);
+      setTimeout(() => setErrorMessage(null), 4000);
       return;
     }
 
     setErrorMessage(null);
-    const key = `${betType}_${value}`;
     setBets((prev) => ({
       ...prev,
-      [key]: (prev[key] || 0) + selectedChip,
+      [key]: newBetOnThisPosition,
     }));
-  }, [selectedChip, isSpinning, loading, user]);
+  }, [selectedChip, isSpinning, loading, user, bets, totalBetAmount]);
 
   const clearBets = () => {
     if (isSpinning || loading) return;
+    // FONTOS: NE töröljük a lastBets-et, csak a jelenlegi téteket!
     setBets({});
+    console.log('🎰 clearBets: tétek törölve, de lastBets megmarad:', lastBets);
+  };
+
+  const saveCurrentBets = () => {
+    if (isSpinning || loading) return;
+    
+    const betsKeys = Object.keys(bets);
+    if (betsKeys.length === 0) {
+      setErrorMessage('Nincs tét az elmentéshez!');
+      setTimeout(() => setErrorMessage(null), 3000);
+      return;
+    }
+
+    // Deep copy, hogy ne legyen referencia probléma
+    const betsToSave = JSON.parse(JSON.stringify(bets));
+    setLastBets(betsToSave);
+    lastBetsRef.current = betsToSave; // Ref-ben is elmentjük
+    console.log('🎰 Jelenlegi tétek elmentve:', betsToSave);
+    console.log('🎰 lastBets beállítva, kulcsok száma:', Object.keys(betsToSave).length);
+    console.log('🎰 lastBetsRef.current is beállítva:', lastBetsRef.current);
+    setErrorMessage('Tétek elmentve! ✅');
+    setTimeout(() => setErrorMessage(null), 2000);
+  };
+
+  const repeatLastBets = () => {
+    if (isSpinning || loading) {
+      console.log('🎰 repeatLastBets: isSpinning vagy loading');
+      return;
+    }
+    
+    // Először próbáljuk a state-et, ha az nincs, akkor a ref-et, végül a localStorage-t
+    let betsToUse = lastBets || lastBetsRef.current;
+    
+    // Ha még mindig nincs, próbáljuk a localStorage-t
+    if (!betsToUse) {
+      try {
+        const saved = localStorage.getItem('roulette_last_bets');
+        if (saved) {
+          betsToUse = JSON.parse(saved);
+          console.log('🎰 repeatLastBets: lastBets betöltve localStorage-ból:', betsToUse);
+          // Visszaállítjuk a state-et is
+          if (betsToUse) {
+            setLastBets(betsToUse);
+            lastBetsRef.current = betsToUse;
+          }
+        }
+      } catch (e) {
+        console.error('🎰 Hiba a lastBets betöltésekor localStorage-ból:', e);
+      }
+    }
+    
+    if (!betsToUse || Object.keys(betsToUse).length === 0) {
+      console.log('🎰 repeatLastBets: nincs lastBets vagy üres');
+      console.log('🎰 lastBets state:', lastBets);
+      console.log('🎰 lastBetsRef.current:', lastBetsRef.current);
+      setErrorMessage('Nincs elmentett tét!');
+      setTimeout(() => setErrorMessage(null), 3000);
+      return;
+    }
+    
+    console.log('🎰 repeatLastBets: betsToUse =', betsToUse);
+    
+    // Ellenőrizzük, hogy van-e elegendő egyenleg az előző tétekhez
+    const lastBetsTotal = Object.values(betsToUse).reduce((sum, amount) => sum + amount, 0);
+    console.log('🎰 repeatLastBets: lastBetsTotal =', lastBetsTotal, 'balance =', user?.balance);
+    
+    if (Number(user?.balance || 0) < lastBetsTotal) {
+      setErrorMessage(`Nincs elegendő egyenleg az előző tétekhez! Szükséges: ${lastBetsTotal.toLocaleString('hu-HU')} HUF, Elérhető: ${Number(user?.balance || 0).toLocaleString('hu-HU')} HUF`);
+      setTimeout(() => setErrorMessage(null), 4000);
+      return;
+    }
+
+    setErrorMessage(null);
+    setBets({ ...betsToUse });
+    console.log('🎰 repeatLastBets: tétek visszaállítva');
   };
 
   const spin = async () => {
     if (isSpinning || loading) return;
     
-    const totalBet = Object.values(bets).reduce((sum, amount) => sum + amount, 0);
-    if (totalBet === 0) {
+    if (totalBetAmount === 0) {
       setErrorMessage('Először helyezz el tétet!');
       setTimeout(() => setErrorMessage(null), 3000);
       return;
     }
 
-    if (Number(user?.balance || 0) < totalBet) {
-      setErrorMessage('Nincs elegendő egyenleg!');
-      setTimeout(() => setErrorMessage(null), 3000);
+    if (Number(user?.balance || 0) < totalBetAmount) {
+      setErrorMessage(`Nincs elegendő egyenleg! Összes tét: ${totalBetAmount.toLocaleString('hu-HU')} HUF, Elérhető: ${Number(user?.balance || 0).toLocaleString('hu-HU')} HUF`);
+      setTimeout(() => setErrorMessage(null), 4000);
       return;
+    }
+
+    // Elmentjük az előző téteket, mielőtt törlődnek
+    // FONTOS: Deep copy, hogy ne legyen referencia probléma
+    const betsToSave = JSON.parse(JSON.stringify(bets));
+    const betsKeys = Object.keys(betsToSave);
+    console.log('🎰 Előző tétek elmentése (spin elején):', betsToSave);
+    console.log('🎰 Bets objektum kulcsai:', betsKeys);
+    console.log('🎰 Bets objektum értékei:', Object.values(betsToSave));
+    console.log('🎰 Bets objektum üres?', betsKeys.length === 0);
+    
+    // Csak akkor mentjük el, ha van tét
+    if (betsKeys.length > 0) {
+      // Biztosítjuk, hogy a lastBets beállítódjon - FONTOS: ne töröljük később!
+      setLastBets(betsToSave);
+      lastBetsRef.current = betsToSave; // Ref-ben is elmentjük
+      console.log('🎰 setLastBets meghívva, lastBets beállítva:', betsToSave);
+      console.log('🎰 lastBetsRef.current is beállítva:', lastBetsRef.current);
+      console.log('🎰 lastBets objektum típusa:', typeof betsToSave);
+      console.log('🎰 lastBets objektum kulcsai száma:', Object.keys(betsToSave).length);
+    } else {
+      console.log('🎰 Nincs tét, nem mentjük el a lastBets-et');
+      // Ha nincs tét, NE töröljük a korábbi lastBets-et!
+      console.log('🎰 Korábbi lastBets megmarad:', lastBets);
+      console.log('🎰 Korábbi lastBetsRef.current megmarad:', lastBetsRef.current);
     }
 
     setErrorMessage(null);
@@ -219,7 +428,7 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
       console.log(`🎰 Kerék animáció: cél index=${targetIndex}, szög=${baseAngle.toFixed(2)}°, összes forgatás=${totalRotation.toFixed(2)}°`);
       
       // Naplózás - játék kezdés
-      console.log(`🎰 Rulett játék kezdve: User ID=${user?.id}, Tétek=${JSON.stringify(formattedBets)}, Összes tét=${totalBet} HUF`);
+      console.log(`🎰 Rulett játék kezdve: User ID=${user?.id}, Tétek=${JSON.stringify(formattedBets)}, Összes tét=${totalBetAmount} HUF`);
       
       // Animáció időtartama - változó, addig pörög, amíg a középen lévő szám nem egyezik
       const minSpinDuration = 3000; // Minimum 3 másodperc
@@ -287,8 +496,19 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
           console.log(`🎰 Rulett játék vége: User ID=${user?.id}, Nyerő szám=${finalNum}, Nyeremény=${winAmount} HUF, Tét=${response.data.totalBet} HUF`);
           console.log('🎰 Nyerő szám színe:', getNumberColor(finalNum));
           
+          // NE töröljük a lastBets-et! Az már elmentve van a pörgés elején
+          console.log('🎰 lastBets a pörgés végén (NE töröljük!):', lastBets);
+          console.log('🎰 lastBets kulcsok száma a pörgés végén:', lastBets ? Object.keys(lastBets).length : 0);
+          
           setLastResult(result);
+          // Csak a jelenlegi téteket töröljük, a lastBets-et NE!
           setBets({});
+          
+          // Ellenőrizzük, hogy a lastBets megmaradt-e
+          setTimeout(() => {
+            console.log('🎰 lastBets ellenőrzés a pörgés után 500ms:', lastBets);
+            console.log('🎰 lastBets kulcsok száma:', lastBets ? Object.keys(lastBets).length : 0);
+          }, 500);
           
           // Nyeremény üzenet megjelenítése - MINDIG megjelenítjük - LÁTVÁNYOSABB
           // Hozzáadjuk a nyertes számot és színét az értesítéshez
@@ -366,6 +586,16 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
     return bets[key] || 0;
   };
 
+  // Helper függvény: ellenőrzi, hogy lehet-e tétet rakni
+  const canPlaceBet = (betType, value) => {
+    if (isSpinning || loading) return false;
+    const key = `${betType}_${value}`;
+    const currentBetOnThisPosition = bets[key] || 0;
+    const newBetOnThisPosition = currentBetOnThisPosition + selectedChip;
+    const totalBetAfterThis = totalBetAmount - currentBetOnThisPosition + newBetOnThisPosition;
+    return Number(user?.balance || 0) >= totalBetAfterThis;
+  };
+
   return (
     <div className="roulette-game">
       {errorMessage && (
@@ -374,28 +604,50 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
         </div>
       )}
       <div className="roulette-controls">
-        <div className="chip-selector">
-          <label>Tét választó:</label>
-          {chipValues.map((value) => (
-            <button
-              key={value}
-              type="button"
-              className={`chip-btn ${selectedChip === value ? 'active' : ''}`}
-              onClick={() => setSelectedChip(value)}
-              disabled={isSpinning || loading}
-            >
-              {value.toLocaleString('hu-HU')} HUF
-            </button>
-          ))}
-        </div>
-        {lastResult && (
-          <div className="winning-number-display">
-            <label>Nyerő szám:</label>
-            <div className={`winning-number-chip ${getNumberColor(lastResult.winningNumber)}`}>
-              {lastResult.winningNumber}
+        <div className="roulette-controls-top">
+          <div className="chip-selector">
+            <label>Tét választó:</label>
+            <div className="chip-buttons">
+              {chipValues.map((value) => {
+                const canAfford = availableBalance >= value;
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    className={`chip-btn ${selectedChip === value ? 'active' : ''} ${!canAfford ? 'disabled' : ''}`}
+                    onClick={() => setSelectedChip(value)}
+                    disabled={isSpinning || loading || !canAfford}
+                    title={!canAfford ? 'Nincs elegendő egyenleg' : ''}
+                  >
+                    {value.toLocaleString('hu-HU')} HUF
+                  </button>
+                );
+              })}
             </div>
           </div>
-        )}
+          <div className="bet-summary">
+            <div className="bet-summary-item">
+              <label>Összes tét:</label>
+              <span className={totalBetAmount > 0 ? 'bet-total' : 'bet-total zero'}>
+                {totalBetAmount.toLocaleString('hu-HU')} HUF
+              </span>
+            </div>
+            <div className="bet-summary-item">
+              <label>Elérhető egyenleg:</label>
+              <span className={availableBalance >= 0 ? 'balance-available' : 'balance-insufficient'}>
+                {availableBalance.toLocaleString('hu-HU')} HUF
+              </span>
+            </div>
+          </div>
+          {lastResult && (
+            <div className="winning-number-display">
+              <label>Nyerő szám:</label>
+              <div className={`winning-number-chip ${getNumberColor(lastResult.winningNumber)}`}>
+                {lastResult.winningNumber}
+              </div>
+            </div>
+          )}
+        </div>
         <div className="roulette-actions">
           <button
             type="button"
@@ -407,9 +659,45 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
           </button>
           <button
             type="button"
+            className="save-bets-btn"
+            onClick={saveCurrentBets}
+            disabled={isSpinning || loading || Object.keys(bets).length === 0}
+            title="Jelenlegi tétek elmentése"
+          >
+            💾 Tét mentése
+          </button>
+          <button
+            type="button"
+            className="repeat-bets-btn"
+            onClick={() => {
+              console.log('🎰 Gombra kattintottak!');
+              console.log('🎰 lastBets:', lastBets);
+              console.log('🎰 isSpinning:', isSpinning, 'loading:', loading);
+              repeatLastBets();
+            }}
+            disabled={isSpinning || loading || !lastBets || (lastBets && Object.keys(lastBets).length === 0)}
+            style={{
+              opacity: (isSpinning || loading || !lastBets || (lastBets && Object.keys(lastBets).length === 0)) ? 0.5 : 1,
+              cursor: (isSpinning || loading || !lastBets || (lastBets && Object.keys(lastBets).length === 0)) ? 'not-allowed' : 'pointer'
+            }}
+            title={
+              lastBets && Object.keys(lastBets).length > 0 
+                ? `Előző tét újra felrakása (${Object.values(lastBets).reduce((sum, amount) => sum + amount, 0).toLocaleString('hu-HU')} HUF)` 
+                : "Nincs elmentett tét"
+            }
+          >
+            🔄 Előző tét
+            {lastBets && Object.keys(lastBets).length > 0 && (
+              <span className="bet-amount-badge">
+                ({Object.values(lastBets).reduce((sum, amount) => sum + amount, 0).toLocaleString('hu-HU')} HUF)
+              </span>
+            )}
+          </button>
+          <button
+            type="button"
             className="spin-btn"
             onClick={spin}
-            disabled={isSpinning || loading || Object.keys(bets).length === 0}
+            disabled={isSpinning || loading || Object.keys(bets).length === 0 || availableBalance < 0}
           >
             {isSpinning ? 'Forgatás...' : 'Forgatás'}
           </button>
@@ -489,8 +777,9 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
             {/* 0 mező - felül középen */}
             <div className="zero-row">
               <div
-                className={`table-cell zero ${getBetAmount('number', 0) > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('number', 0)}
+                className={`table-cell zero ${getBetAmount('number', 0) > 0 ? 'has-bet' : ''} ${!canPlaceBet('number', 0) ? 'insufficient-balance' : ''}`}
+                onClick={() => canPlaceBet('number', 0) && handlePlaceBet('number', 0)}
+                style={{ cursor: canPlaceBet('number', 0) ? 'pointer' : 'not-allowed', opacity: canPlaceBet('number', 0) ? 1 : 0.5 }}
               >
                 <div className="cell-number">0</div>
                 {getBetAmount('number', 0) > 0 && (
@@ -508,11 +797,13 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
                   {TABLE_LAYOUT.map((row, rowIdx) => 
                     row.map((num, colIdx) => {
                       const color = getNumberColor(num);
+                      const canBet = canPlaceBet('number', num);
                       return (
                         <div
                           key={`${rowIdx}-${colIdx}-${num}`}
-                          className={`table-cell number ${color} ${getBetAmount('number', num) > 0 ? 'has-bet' : ''}`}
-                          onClick={() => handlePlaceBet('number', num)}
+                          className={`table-cell number ${color} ${getBetAmount('number', num) > 0 ? 'has-bet' : ''} ${!canBet ? 'insufficient-balance' : ''}`}
+                          onClick={() => canBet && handlePlaceBet('number', num)}
+                          style={{ cursor: canBet ? 'pointer' : 'not-allowed', opacity: canBet ? 1 : 0.5 }}
                         >
                           <div className="cell-number">{num}</div>
                           {getBetAmount('number', num) > 0 && (
@@ -528,33 +819,22 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
 
                 {/* Oszlop fogadások (2:1) - jobbra, sorok végén */}
                 <div className="column-bets">
-                  <div
-                    className={`table-cell column ${getBetAmount('column', 1) > 0 ? 'has-bet' : ''}`}
-                    onClick={() => handlePlaceBet('column', 1)}
-                  >
-                    2 to 1
-                    {getBetAmount('column', 1) > 0 && (
-                      <div className="bet-chip">{getBetAmount('column', 1).toLocaleString('hu-HU')}</div>
-                    )}
-                  </div>
-                  <div
-                    className={`table-cell column ${getBetAmount('column', 2) > 0 ? 'has-bet' : ''}`}
-                    onClick={() => handlePlaceBet('column', 2)}
-                  >
-                    2 to 1
-                    {getBetAmount('column', 2) > 0 && (
-                      <div className="bet-chip">{getBetAmount('column', 2).toLocaleString('hu-HU')}</div>
-                    )}
-                  </div>
-                  <div
-                    className={`table-cell column ${getBetAmount('column', 3) > 0 ? 'has-bet' : ''}`}
-                    onClick={() => handlePlaceBet('column', 3)}
-                  >
-                    2 to 1
-                    {getBetAmount('column', 3) > 0 && (
-                      <div className="bet-chip">{getBetAmount('column', 3).toLocaleString('hu-HU')}</div>
-                    )}
-                  </div>
+                  {[1, 2, 3].map((colNum) => {
+                    const canBet = canPlaceBet('column', colNum);
+                    return (
+                      <div
+                        key={`column-${colNum}`}
+                        className={`table-cell column ${getBetAmount('column', colNum) > 0 ? 'has-bet' : ''} ${!canBet ? 'insufficient-balance' : ''}`}
+                        onClick={() => canBet && handlePlaceBet('column', colNum)}
+                        style={{ cursor: canBet ? 'pointer' : 'not-allowed', opacity: canBet ? 1 : 0.5 }}
+                      >
+                        2 to 1
+                        {getBetAmount('column', colNum) > 0 && (
+                          <div className="bet-chip">{getBetAmount('column', colNum).toLocaleString('hu-HU')}</div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -562,92 +842,55 @@ export default function RouletteGame({ user, onBalanceUpdate, onNotification }) 
             {/* Dozen fogadások - pontosan a számok grid szerint 4-4 oszlopra */}
             <div className="dozens-bets-wrapper">
               <div className="dozens-bets">
-                <div
-                  className={`table-cell dozen ${getBetAmount('dozen', 1) > 0 ? 'has-bet' : ''}`}
-                  onClick={() => handlePlaceBet('dozen', 1)}
-                >
-                  1st 12
-                  {getBetAmount('dozen', 1) > 0 && (
-                    <div className="bet-chip">{getBetAmount('dozen', 1).toLocaleString('hu-HU')}</div>
-                  )}
-                </div>
-                <div
-                  className={`table-cell dozen ${getBetAmount('dozen', 2) > 0 ? 'has-bet' : ''}`}
-                  onClick={() => handlePlaceBet('dozen', 2)}
-                >
-                  2nd 12
-                  {getBetAmount('dozen', 2) > 0 && (
-                    <div className="bet-chip">{getBetAmount('dozen', 2).toLocaleString('hu-HU')}</div>
-                  )}
-                </div>
-                <div
-                  className={`table-cell dozen ${getBetAmount('dozen', 3) > 0 ? 'has-bet' : ''}`}
-                  onClick={() => handlePlaceBet('dozen', 3)}
-                >
-                  3rd 12
-                  {getBetAmount('dozen', 3) > 0 && (
-                    <div className="bet-chip">{getBetAmount('dozen', 3).toLocaleString('hu-HU')}</div>
-                  )}
-                </div>
+                {[1, 2, 3].map((dozenNum) => {
+                  const canBet = canPlaceBet('dozen', dozenNum);
+                  const labels = ['1st 12', '2nd 12', '3rd 12'];
+                  return (
+                    <div
+                      key={`dozen-${dozenNum}`}
+                      className={`table-cell dozen ${getBetAmount('dozen', dozenNum) > 0 ? 'has-bet' : ''} ${!canBet ? 'insufficient-balance' : ''}`}
+                      onClick={() => canBet && handlePlaceBet('dozen', dozenNum)}
+                      style={{ cursor: canBet ? 'pointer' : 'not-allowed', opacity: canBet ? 1 : 0.5 }}
+                    >
+                      {labels[dozenNum - 1]}
+                      {getBetAmount('dozen', dozenNum) > 0 && (
+                        <div className="bet-chip">{getBetAmount('dozen', dozenNum).toLocaleString('hu-HU')}</div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
 
             {/* Outside bets */}
             <div className="outside-bets">
-              <div
-                className={`table-cell outside ${getBetAmount('range', '1-18') > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('range', '1-18')}
-              >
-                1 to 18
-                {getBetAmount('range', '1-18') > 0 && (
-                  <div className="bet-chip">{getBetAmount('range', '1-18').toLocaleString('hu-HU')}</div>
-                )}
-              </div>
-              <div
-                className={`table-cell outside ${getBetAmount('even', true) > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('even', true)}
-              >
-                EVEN
-                {getBetAmount('even', true) > 0 && (
-                  <div className="bet-chip">{getBetAmount('even', true).toLocaleString('hu-HU')}</div>
-                )}
-              </div>
-              <div
-                className={`table-cell outside red-bet ${getBetAmount('color', 'red') > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('color', 'red')}
-              >
-                <span className="red-diamond">◆</span>
-                {getBetAmount('color', 'red') > 0 && (
-                  <div className="bet-chip">{getBetAmount('color', 'red').toLocaleString('hu-HU')}</div>
-                )}
-              </div>
-              <div
-                className={`table-cell outside black-bet ${getBetAmount('color', 'black') > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('color', 'black')}
-              >
-                <span className="black-diamond">◆</span>
-                {getBetAmount('color', 'black') > 0 && (
-                  <div className="bet-chip">{getBetAmount('color', 'black').toLocaleString('hu-HU')}</div>
-                )}
-              </div>
-              <div
-                className={`table-cell outside ${getBetAmount('odd', true) > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('odd', true)}
-              >
-                ODD
-                {getBetAmount('odd', true) > 0 && (
-                  <div className="bet-chip">{getBetAmount('odd', true).toLocaleString('hu-HU')}</div>
-                )}
-              </div>
-              <div
-                className={`table-cell outside ${getBetAmount('range', '19-36') > 0 ? 'has-bet' : ''}`}
-                onClick={() => handlePlaceBet('range', '19-36')}
-              >
-                19 to 36
-                {getBetAmount('range', '19-36') > 0 && (
-                  <div className="bet-chip">{getBetAmount('range', '19-36').toLocaleString('hu-HU')}</div>
-                )}
-              </div>
+              {[
+                { type: 'range', value: '1-18', label: '1 to 18' },
+                { type: 'even', value: true, label: 'EVEN' },
+                { type: 'color', value: 'red', label: '◆', className: 'red-bet' },
+                { type: 'color', value: 'black', label: '◆', className: 'black-bet' },
+                { type: 'odd', value: true, label: 'ODD' },
+                { type: 'range', value: '19-36', label: '19 to 36' },
+              ].map((bet, idx) => {
+                const canBet = canPlaceBet(bet.type, bet.value);
+                return (
+                  <div
+                    key={`outside-${idx}`}
+                    className={`table-cell outside ${bet.className || ''} ${getBetAmount(bet.type, bet.value) > 0 ? 'has-bet' : ''} ${!canBet ? 'insufficient-balance' : ''}`}
+                    onClick={() => canBet && handlePlaceBet(bet.type, bet.value)}
+                    style={{ cursor: canBet ? 'pointer' : 'not-allowed', opacity: canBet ? 1 : 0.5 }}
+                  >
+                    {bet.type === 'color' ? (
+                      <span className={`${bet.value}-diamond`}>{bet.label}</span>
+                    ) : (
+                      bet.label
+                    )}
+                    {getBetAmount(bet.type, bet.value) > 0 && (
+                      <div className="bet-chip">{getBetAmount(bet.type, bet.value).toLocaleString('hu-HU')}</div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
         </div>

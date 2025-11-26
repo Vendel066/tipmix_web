@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import RouletteGame from './casino/RouletteGame';
+import BlackJackGame from './casino/BlackJackGame';
 
 export default function Casino({ user, onBalanceUpdate, onNotification }) {
   // localStorage-ból olvassuk be, hogy ne vesszen el újrarendereléskor
@@ -32,6 +33,13 @@ export default function Casino({ user, onBalanceUpdate, onNotification }) {
       description: 'Klasszikus rulett játék! Válassz számokat, színeket vagy egyéb kombinációkat és próbáld meg eltalálni a nyerő számot!',
       minBet: 500,
     },
+    {
+      id: 'blackjack',
+      name: 'BlackJack',
+      icon: '🃏',
+      description: 'Klasszikus blackjack játék! Próbáld meg elérni a 21-et anélkül, hogy meghaladnád!',
+      minBet: 1000,
+    },
   ];
 
   if (selectedGame) {
@@ -47,6 +55,13 @@ export default function Casino({ user, onBalanceUpdate, onNotification }) {
         </button>
         {selectedGame === 'roulette' && (
           <RouletteGame 
+            user={user} 
+            onBalanceUpdate={onBalanceUpdate}
+            onNotification={handleNotification}
+          />
+        )}
+        {selectedGame === 'blackjack' && (
+          <BlackJackGame 
             user={user} 
             onBalanceUpdate={onBalanceUpdate}
             onNotification={handleNotification}

@@ -1,6 +1,7 @@
 import { useState } from 'react';
+import UserBadge from './UserBadge';
 
-export default function ProfileMenu({ user, onLogout, onNavigate, onPaymentRequest, onDepositRequest }) {
+export default function ProfileMenu({ user, onLogout, onNavigate, onPaymentRequest, onDepositRequest, onTransferRequest }) {
   const [open, setOpen] = useState(false);
   const isAdmin = Boolean(user?.is_admin);
 
@@ -26,6 +27,11 @@ export default function ProfileMenu({ user, onLogout, onNavigate, onPaymentReque
     onDepositRequest?.();
   };
 
+  const handleTransferClick = () => {
+    setOpen(false);
+    onTransferRequest?.();
+  };
+
   return (
     <div className="profile-menu">
       <button
@@ -37,7 +43,10 @@ export default function ProfileMenu({ user, onLogout, onNavigate, onPaymentReque
       >
         <span className="avatar">{initials}</span>
         <div>
-          <strong>{user?.username}</strong>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+            <strong>{user?.username}</strong>
+            {user?.id && <UserBadge userId={user.id} size="small" />}
+          </div>
           <p>{user?.email}</p>
         </div>
         <svg viewBox="0 0 24 24" width={16} height={16} aria-hidden="true">
@@ -75,6 +84,9 @@ export default function ProfileMenu({ user, onLogout, onNavigate, onPaymentReque
               </button>
               <button type="button" onClick={handlePaymentClick}>
                 Kifizetés
+              </button>
+              <button type="button" onClick={handleTransferClick}>
+                Pénz küldése
               </button>
             </>
           )}

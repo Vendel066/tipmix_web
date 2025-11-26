@@ -8,7 +8,9 @@
     "start": "node src/server.js",
     "db:setup": "node src/scripts/initDb.js",
     "db:migrate": "node src/scripts/migrateStockHoldings.js",
-    "db:migrate:bet-details": "node src/scripts/migrateBetDetails.js"
+    "db:migrate:bet-details": "node src/scripts/migrateBetDetails.js",
+    "db:migrate:transfer-types": "node src/scripts/migrateTransferTypes.js",
+    "db:migrate:user-badge": "node src/scripts/migrateUserBadge.js"
   },
   "keywords": [],
   "author": "",

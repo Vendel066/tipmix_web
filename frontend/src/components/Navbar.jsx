@@ -8,7 +8,7 @@ const baseNavItems = [
   { key: 'investment', label: 'Befektetés' },
 ];
 
-export default function Navbar({ active, onChange, user, onLogout, onPaymentRequest }) {
+export default function Navbar({ active, onChange, user, onLogout, onPaymentRequest, onTransferRequest }) {
   const items = baseNavItems;
   const isAdmin = Boolean(user?.is_admin);
 
@@ -45,6 +45,7 @@ export default function Navbar({ active, onChange, user, onLogout, onPaymentRequ
         onNavigate={onChange}
         onPaymentRequest={() => onPaymentRequest?.('withdraw')}
         onDepositRequest={() => onPaymentRequest?.('deposit')}
+        onTransferRequest={onTransferRequest}
       />
       </div>
     </nav>

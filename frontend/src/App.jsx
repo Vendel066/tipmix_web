@@ -5,8 +5,11 @@ import BetCard from './components/BetCard';
 import ComboBetCard from './components/ComboBetCard';
 import AdminPanel from './components/AdminPanel';
 import HistoryTable from './components/HistoryTable';
+import TransactionTable from './components/TransactionTable';
+import UserBadge from './components/UserBadge';
 import Navbar from './components/Navbar';
 import PaymentModal from './components/PaymentModal';
+import TransferModal from './components/TransferModal';
 import Casino from './components/Casino';
 import Investment from './components/Investment';
 import Portfolio from './components/Portfolio';
@@ -20,14 +23,17 @@ function App() {
   const [openBets, setOpenBets] = useState([]);
   const [activeTickets, setActiveTickets] = useState([]);
   const [history, setHistory] = useState([]);
+  const [transactions, setTransactions] = useState([]);
   const [adminBets, setAdminBets] = useState([]);
   const [globalLoading, setGlobalLoading] = useState(false);
   const [toast, setToast] = useState(null);
   const [paymentModal, setPaymentModal] = useState(null);
+  const [transferModal, setTransferModal] = useState(false);
   const [notification, setNotification] = useState(null);
   const [notificationType, setNotificationType] = useState(null);
   const [betsTab, setBetsTab] = useState('bets'); // Tab kezelés a fogadások oldalon
   const [investmentTab, setInvestmentTab] = useState('investment'); // Tab kezelés a befektetés oldalon
+  const [historyTab, setHistoryTab] = useState('bets'); // Tab kezelés a napló oldalon (bets vagy transactions)
 
   const isAdmin = Boolean(user?.is_admin);
 
@@ -46,14 +52,16 @@ function App() {
         api.get('/bets'),
         api.get('/bets/me/history'),
         api.get('/bets/me/active'),
+        api.get('/payments/me'),
       ];
       if (isAdmin) {
         requests.push(api.get('/bets/admin'));
       }
-      const [betsRes, historyRes, activeRes, adminRes] = await Promise.all(requests);
+      const [betsRes, historyRes, activeRes, transactionsRes, adminRes] = await Promise.all(requests);
       setOpenBets(betsRes.data.bets);
       setHistory(historyRes.data.bets);
       setActiveTickets(activeRes.data.bets);
+      setTransactions(transactionsRes.data.transactions || []);
       setAdminBets(isAdmin ? adminRes.data.bets : []);
     } finally {
       setGlobalLoading(false);
@@ -123,7 +131,10 @@ function App() {
   const renderHome = () => (
     <section className="home-hero">
       <div className="hero-copy">
-        <p className="eyebrow">Szia {user.username}</p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', marginBottom: '0.5rem' }}>
+          <p className="eyebrow">Szia {user.username}</p>
+          {user?.id && <UserBadge userId={user.id} size="medium" />}
+        </div>
         <h1>Fogadj okosan, kövesd professzionális dashboardon.</h1>
         <p>
           Válts a tabok között, hogy gyorsan megtaláld az aktív fogadásaidat, nézd meg a naplót vagy kezeld az eseményeket
@@ -215,7 +226,28 @@ function App() {
   );
 
   const renderActive = () => <HistoryTable bets={activeTickets} variant="active" />;
-  const renderHistory = () => <HistoryTable bets={settledHistory} variant="history" />;
+  const renderHistory = () => (
+    <section>
+      <div className="admin-tabs">
+        <button
+          type="button"
+          className={historyTab === 'bets' ? 'active' : ''}
+          onClick={() => setHistoryTab('bets')}
+        >
+          Fogadások
+        </button>
+        <button
+          type="button"
+          className={historyTab === 'transactions' ? 'active' : ''}
+          onClick={() => setHistoryTab('transactions')}
+        >
+          Tranzakciók
+        </button>
+      </div>
+      {historyTab === 'bets' && <HistoryTable bets={settledHistory} variant="history" />}
+      {historyTab === 'transactions' && <TransactionTable transactions={transactions} />}
+    </section>
+  );
 
   const renderAdmin = () =>
     isAdmin ? <AdminPanel bets={adminBets} onCreate={handleCreateBet} onClose={handleCloseBet} /> : null;
@@ -307,6 +339,7 @@ function App() {
         user={user}
         onLogout={logout}
         onPaymentRequest={handlePaymentRequest}
+        onTransferRequest={() => setTransferModal(true)}
       />
       {globalLoading && (
         <div className="inline-loader">
@@ -325,6 +358,17 @@ function App() {
           type={paymentModal}
           onClose={() => setPaymentModal(null)}
           onSuccess={handlePaymentSuccess}
+        />
+      )}
+      {transferModal && (
+        <TransferModal
+          user={user}
+          onClose={() => setTransferModal(false)}
+          onSuccess={(message) => {
+            showToast(message);
+            refreshProfile();
+            loadData(); // Frissítjük a tranzakciókat is
+          }}
         />
       )}
       <Notification

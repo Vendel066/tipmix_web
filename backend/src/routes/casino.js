@@ -641,4 +641,587 @@ router.get('/history', auth(), async (req, res) => {
   return res.json({ games: rows });
 });
 
+// ========== BLACKJACK JÁTÉK ==========
+
+// Kártyapakli generálása és keverése
+function createDeck() {
+  const suits = ['hearts', 'diamonds', 'clubs', 'spades'];
+  const ranks = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
+  const deck = [];
+  
+  for (const suit of suits) {
+    for (const rank of ranks) {
+      deck.push({ suit, rank });
+    }
+  }
+  
+  // Keverés - Fisher-Yates algoritmus
+  const crypto = require('crypto');
+  for (let i = deck.length - 1; i > 0; i--) {
+    const randomBytes = crypto.randomBytes(4);
+    const randomValue = randomBytes.readUInt32BE(0) / 0xFFFFFFFF;
+    const j = Math.floor(randomValue * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  
+  return deck;
+}
+
+// Kártya értékének kiszámítása
+function getCardValue(card, currentHandValue = 0) {
+  if (card.rank === 'A') {
+    // Ha az ász hozzáadásával túllépi a 21-et, akkor 1, különben 11
+    return currentHandValue + 11 > 21 ? 1 : 11;
+  }
+  if (['J', 'Q', 'K'].includes(card.rank)) {
+    return 10;
+  }
+  return parseInt(card.rank, 10);
+}
+
+// Kéz értékének kiszámítása (kezeli az ászok változó értékét)
+function calculateHandValue(hand) {
+  let value = 0;
+  let aces = 0;
+  
+  for (const card of hand) {
+    if (card.rank === 'A') {
+      aces++;
+      value += 11;
+    } else if (['J', 'Q', 'K'].includes(card.rank)) {
+      value += 10;
+    } else {
+      value += parseInt(card.rank, 10);
+    }
+  }
+  
+  // Csökkentjük az ászok értékét, ha túl sok lenne
+  while (value > 21 && aces > 0) {
+    value -= 10;
+    aces--;
+  }
+  
+  return value;
+}
+
+// Blackjack ellenőrzés (A + 10 értékű lap = 21)
+function isBlackjack(hand) {
+  if (hand.length !== 2) return false;
+  const values = hand.map(card => {
+    if (card.rank === 'A') return 11;
+    if (['J', 'Q', 'K'].includes(card.rank)) return 10;
+    if (card.rank === '10') return 10;
+    return 0;
+  });
+  return values.reduce((a, b) => a + b, 0) === 21;
+}
+
+// Játék indítása - tét levonása és kezdő lapok osztása
+router.post('/blackjack/start', auth(), async (req, res) => {
+  const { bet } = req.body;
+  const numericBet = Number(bet);
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [userRows] = await connection.execute(
+      'SELECT id, balance FROM users WHERE id = ? FOR UPDATE',
+      [req.user.id],
+    );
+    const user = userRows[0];
+    if (!user) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Felhasználó nem található' });
+    }
+    
+    if (Number(user.balance) < numericBet) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Nincs elegendő egyenleg' });
+    }
+
+    if (numericBet < 1000) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'A minimum tét 1000 HUF' });
+    }
+
+    // Tét levonása
+    await connection.execute('UPDATE users SET balance = balance - ? WHERE id = ?', [
+      numericBet,
+      req.user.id,
+    ]);
+
+    // Új pakli generálása
+    const deck = createDeck();
+    
+    // Kezdő lapok osztása: játékos 2 lap, osztó 2 lap (1 felfedve)
+    const playerHand = [deck.pop(), deck.pop()];
+    const dealerHand = [deck.pop(), deck.pop()];
+    
+    const playerValue = calculateHandValue(playerHand);
+    const dealerValue = calculateHandValue(dealerHand);
+    const playerBlackjack = isBlackjack(playerHand);
+    const dealerBlackjack = isBlackjack(dealerHand);
+    
+    // Ha mindkét félnek van blackjack, akkor push (visszatérítés)
+    let gameStatus = 'playing';
+    let winAmount = 0;
+    
+    if (playerBlackjack && dealerBlackjack) {
+      gameStatus = 'push';
+      winAmount = numericBet; // Visszatérítés
+      await connection.execute('UPDATE users SET balance = balance + ? WHERE id = ?', [
+        winAmount,
+        req.user.id,
+      ]);
+    } else if (playerBlackjack) {
+      // Játékos blackjack - 2.5x nyeremény (3:2 odds)
+      gameStatus = 'player_blackjack';
+      winAmount = Math.floor(numericBet * 2.5);
+      await connection.execute('UPDATE users SET balance = balance + ? WHERE id = ?', [
+        winAmount,
+        req.user.id,
+      ]);
+    }
+    
+    // Frissített egyenleg lekérése
+    const [updatedUserRows] = await connection.execute(
+      'SELECT balance FROM users WHERE id = ?',
+      [req.user.id],
+    );
+    const newBalance = Number(updatedUserRows[0].balance);
+    
+    // Játék adatok elmentése (ha véget ért)
+    let gameId = null;
+    if (gameStatus !== 'playing') {
+      const [result] = await connection.execute(
+        `INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, game_data, status)
+         VALUES (?, 'BLACKJACK', ?, ?, ?, ?)`,
+        [
+          req.user.id,
+          numericBet,
+          winAmount,
+          JSON.stringify({
+            playerHand,
+            dealerHand,
+            playerValue,
+            dealerValue,
+            playerBlackjack,
+            dealerBlackjack,
+            gameStatus,
+          }),
+          gameStatus === 'player_blackjack' ? 'WON' : 'PUSH',
+        ],
+      );
+      gameId = result.insertId;
+    }
+
+    await connection.commit();
+    connection.release();
+
+    return res.json({
+      success: true,
+      newBalance,
+      gameId,
+      deck: deck.map(card => ({ suit: card.suit, rank: card.rank })), // Visszaadjuk a maradék paklit
+      playerHand: playerHand.map(card => ({ suit: card.suit, rank: card.rank })),
+      dealerHand: dealerHand.map(card => ({ suit: card.suit, rank: card.rank })), // Mindkét lapot visszaadjuk, a frontend rejti el a másodikat
+      playerValue,
+      dealerValue: getCardValue(dealerHand[0]), // Csak az első lap értékét mutatjuk
+      playerBlackjack,
+      dealerBlackjack: false, // Nem mutatjuk, hogy van-e dealer blackjack
+      gameStatus,
+      winAmount,
+    });
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('Blackjack start error:', err);
+    return res.status(500).json({ message: 'Hiba a játék indításakor' });
+  }
+});
+
+// Lap húzása (Hit)
+router.post('/blackjack/hit', auth(), async (req, res) => {
+  const { deck, playerHand, dealerHand, bet } = req.body;
+  const numericBet = Number(bet);
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [userRows] = await connection.execute(
+      'SELECT id, balance FROM users WHERE id = ? FOR UPDATE',
+      [req.user.id],
+    );
+    const user = userRows[0];
+    if (!user) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Felhasználó nem található' });
+    }
+
+    // Új lap húzása
+    const currentDeck = deck.map(c => ({ suit: c.suit, rank: c.rank }));
+    if (currentDeck.length === 0) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'A pakli üres' });
+    }
+    
+    const newCard = currentDeck.pop();
+    const newPlayerHand = [...playerHand, newCard];
+    const playerValue = calculateHandValue(newPlayerHand);
+    
+    let gameStatus = 'playing';
+    let winAmount = 0;
+    let finalDealerHand = dealerHand;
+    let finalDealerValue = 0;
+    
+    // Ha a játékos túllépi a 21-et (bust), akkor vesztett
+    if (playerValue > 21) {
+      gameStatus = 'player_bust';
+      finalDealerHand = dealerHand; // Dealer lapjai maradnak rejtve
+      finalDealerValue = calculateHandValue(dealerHand);
+      
+      // Játék mentése
+      const [result] = await connection.execute(
+        `INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, game_data, status)
+         VALUES (?, 'BLACKJACK', ?, ?, ?, 'LOST')`,
+        [
+          req.user.id,
+          numericBet,
+          0,
+          JSON.stringify({
+            playerHand: newPlayerHand,
+            dealerHand,
+            playerValue,
+            dealerValue: finalDealerValue,
+            gameStatus,
+          }),
+        ],
+      );
+      
+      await connection.commit();
+      connection.release();
+      
+      return res.json({
+        success: true,
+        newBalance: Number(user.balance),
+        gameId: result.insertId,
+        playerHand: newPlayerHand,
+        dealerHand,
+        playerValue,
+        dealerValue: finalDealerValue,
+        gameStatus,
+        winAmount: 0,
+        deck: currentDeck,
+      });
+    }
+    
+    // Frissített egyenleg (nincs változás, még játszik)
+    const newBalance = Number(user.balance);
+    
+    await connection.commit();
+    connection.release();
+
+    return res.json({
+      success: true,
+      newBalance,
+      playerHand: newPlayerHand,
+      dealerHand,
+      playerValue,
+      dealerValue: calculateHandValue(dealerHand),
+      gameStatus,
+      deck: currentDeck,
+    });
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('Blackjack hit error:', err);
+    return res.status(500).json({ message: 'Hiba a lap húzása során' });
+  }
+});
+
+// Stand (megállás) - osztó játszik
+router.post('/blackjack/stand', auth(), async (req, res) => {
+  const { deck, playerHand, dealerHand, bet } = req.body;
+  const numericBet = Number(bet);
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [userRows] = await connection.execute(
+      'SELECT id, balance FROM users WHERE id = ? FOR UPDATE',
+      [req.user.id],
+    );
+    const user = userRows[0];
+    if (!user) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Felhasználó nem található' });
+    }
+
+    // Osztó lapjainak kijátszása
+    const currentDeck = deck.map(c => ({ suit: c.suit, rank: c.rank }));
+    const fullDealerHand = [...dealerHand];
+    
+    // Osztó húz addig, amíg 17-nél kisebb az értéke (vagy puha 17-nél)
+    while (true) {
+      const dealerValue = calculateHandValue(fullDealerHand);
+      // Osztó megáll, ha 17 vagy több
+      if (dealerValue >= 17) {
+        break;
+      }
+      
+      // Ha nincs több lap, vége
+      if (currentDeck.length === 0) {
+        break;
+      }
+      
+      // Új lap húzása
+      const newCard = currentDeck.pop();
+      fullDealerHand.push(newCard);
+    }
+    
+    const playerValue = calculateHandValue(playerHand);
+    const dealerValue = calculateHandValue(fullDealerHand);
+    
+    // Eredmény meghatározása
+    let gameStatus = '';
+    let winAmount = 0;
+    
+    if (dealerValue > 21) {
+      // Dealer bust - játékos nyert
+      gameStatus = 'dealer_bust';
+      winAmount = numericBet * 2; // 1:1 odds
+    } else if (playerValue > dealerValue) {
+      // Játékos értéke nagyobb
+      gameStatus = 'player_win';
+      winAmount = numericBet * 2; // 1:1 odds
+    } else if (playerValue < dealerValue) {
+      // Dealer értéke nagyobb
+      gameStatus = 'dealer_win';
+      winAmount = 0;
+    } else {
+      // Döntetlen (push)
+      gameStatus = 'push';
+      winAmount = numericBet; // Visszatérítés
+    }
+    
+    // Nyeremény hozzáadása
+    if (winAmount > 0) {
+      await connection.execute('UPDATE users SET balance = balance + ? WHERE id = ?', [
+        winAmount,
+        req.user.id,
+      ]);
+    }
+    
+    // Frissített egyenleg lekérése
+    const [updatedUserRows] = await connection.execute(
+      'SELECT balance FROM users WHERE id = ?',
+      [req.user.id],
+    );
+    const newBalance = Number(updatedUserRows[0].balance);
+    
+    // Játék mentése
+    const [result] = await connection.execute(
+      `INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, game_data, status)
+       VALUES (?, 'BLACKJACK', ?, ?, ?, ?)`,
+      [
+        req.user.id,
+        numericBet,
+        winAmount,
+        JSON.stringify({
+          playerHand,
+          dealerHand: fullDealerHand,
+          playerValue,
+          dealerValue,
+          gameStatus,
+        }),
+        winAmount > 0 ? 'WON' : 'LOST',
+      ],
+    );
+
+    await connection.commit();
+    connection.release();
+
+    return res.json({
+      success: true,
+      newBalance,
+      gameId: result.insertId,
+      playerHand,
+      dealerHand: fullDealerHand,
+      playerValue,
+      dealerValue,
+      gameStatus,
+      winAmount,
+    });
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('Blackjack stand error:', err);
+    return res.status(500).json({ message: 'Hiba a stand során' });
+  }
+});
+
+// Double down (duplázás)
+router.post('/blackjack/double', auth(), async (req, res) => {
+  const { deck, playerHand, dealerHand, bet } = req.body;
+  const numericBet = Number(bet);
+  const connection = await pool.getConnection();
+
+  try {
+    await connection.beginTransaction();
+
+    const [userRows] = await connection.execute(
+      'SELECT id, balance FROM users WHERE id = ? FOR UPDATE',
+      [req.user.id],
+    );
+    const user = userRows[0];
+    if (!user) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Felhasználó nem található' });
+    }
+    
+    // Ellenőrizzük, hogy van-e elegendő egyenleg
+    if (Number(user.balance) < numericBet) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'Nincs elegendő egyenleg a duplázáshoz' });
+    }
+    
+    // Tét duplázása (még egyszer levonjuk)
+    await connection.execute('UPDATE users SET balance = balance - ? WHERE id = ?', [
+      numericBet,
+      req.user.id,
+    ]);
+    
+    const totalBet = numericBet * 2; // Dupla tét
+    
+    // Új lap húzása
+    const currentDeck = deck.map(c => ({ suit: c.suit, rank: c.rank }));
+    if (currentDeck.length === 0) {
+      await connection.rollback();
+      connection.release();
+      return res.status(400).json({ message: 'A pakli üres' });
+    }
+    
+    const newCard = currentDeck.pop();
+    const newPlayerHand = [...playerHand, newCard];
+    const playerValue = calculateHandValue(newPlayerHand);
+    
+    // Osztó lapjainak kijátszása (automatikusan)
+    const fullDealerHand = [...dealerHand];
+    
+    while (true) {
+      const dealerValue = calculateHandValue(fullDealerHand);
+      if (dealerValue >= 17) {
+        break;
+      }
+      if (currentDeck.length === 0) {
+        break;
+      }
+      const newCard = currentDeck.pop();
+      fullDealerHand.push(newCard);
+    }
+    
+    const dealerValue = calculateHandValue(fullDealerHand);
+    
+    // Eredmény meghatározása
+    let gameStatus = '';
+    let winAmount = 0;
+    
+    if (playerValue > 21) {
+      // Játékos bust
+      gameStatus = 'player_bust';
+      winAmount = 0;
+    } else if (dealerValue > 21) {
+      // Dealer bust
+      gameStatus = 'dealer_bust';
+      winAmount = totalBet * 2; // 1:1 odds a dupla tétre
+    } else if (playerValue > dealerValue) {
+      // Játékos nyert
+      gameStatus = 'player_win';
+      winAmount = totalBet * 2; // 1:1 odds a dupla tétre
+    } else if (playerValue < dealerValue) {
+      // Dealer nyert
+      gameStatus = 'dealer_win';
+      winAmount = 0;
+    } else {
+      // Döntetlen
+      gameStatus = 'push';
+      winAmount = totalBet; // Visszatérítés
+    }
+    
+    // Nyeremény hozzáadása
+    if (winAmount > 0) {
+      await connection.execute('UPDATE users SET balance = balance + ? WHERE id = ?', [
+        winAmount,
+        req.user.id,
+      ]);
+    }
+    
+    // Frissített egyenleg lekérése
+    const [updatedUserRows] = await connection.execute(
+      'SELECT balance FROM users WHERE id = ?',
+      [req.user.id],
+    );
+    const newBalance = Number(updatedUserRows[0].balance);
+    
+    // Játék mentése
+    const [result] = await connection.execute(
+      `INSERT INTO casino_games (user_id, game_type, bet_amount, win_amount, game_data, status)
+       VALUES (?, 'BLACKJACK', ?, ?, ?, ?)`,
+      [
+        req.user.id,
+        totalBet,
+        winAmount,
+        JSON.stringify({
+          playerHand: newPlayerHand,
+          dealerHand: fullDealerHand,
+          playerValue,
+          dealerValue,
+          gameStatus,
+          doubled: true,
+        }),
+        winAmount > 0 ? 'WON' : 'LOST',
+      ],
+    );
+
+    await connection.commit();
+    connection.release();
+
+    return res.json({
+      success: true,
+      newBalance,
+      gameId: result.insertId,
+      playerHand: newPlayerHand,
+      dealerHand: fullDealerHand,
+      playerValue,
+      dealerValue,
+      gameStatus,
+      winAmount,
+    });
+  } catch (err) {
+    if (connection) {
+      await connection.rollback();
+      connection.release();
+    }
+    console.error('Blackjack double error:', err);
+    return res.status(500).json({ message: 'Hiba a duplázás során' });
+  }
+});
+
 module.exports = router;
